@@ -1,11 +1,11 @@
 from pydantic import BaseModel, Field
 
 
-class Variant(BaseModel):
-    color: str | None = None
-    size: str | None = None
-    sku: str | None = None
-    stock: int = 0
+class ColorVariant(BaseModel):
+    name: str                       # e.g. "Orange"
+    hex: str = "#000000"            # swatch colour
+    images: list[str] = []          # images shown when this colour is picked
+    stock: int = 0                  # inventory for this colour
 
 
 class ProductCreate(BaseModel):
@@ -13,12 +13,23 @@ class ProductCreate(BaseModel):
     description: str = ""
     brand: str | None = None
     category_id: str | None = None
-    price: float = Field(ge=0)
-    mrp: float | None = Field(default=None, ge=0)
-    images: list[str] = []
-    colors: list[str] = []
+
+    mrp: float = Field(ge=0)                    # actual price (struck through)
+    price: float = Field(ge=0)                  # needed / selling price
+    discount_pct: float = Field(default=0, ge=0, le=95)  # admin extra discount
+    discount_on: str = "price"                  # "mrp" | "price"
+
+    images: list[str] = []                      # general gallery (no colour)
+    colors: list[ColorVariant] = []             # colour-wise images + stock
     sizes: list[str] = []
-    variants: list[Variant] = []
+
+    stock: int = 0                              # used when there are no colour variants
+    low_stock_threshold: int = 5
+
+    rating: float = Field(default=0, ge=0, le=5)
+    review_count: int = 0
+    sold_count: int = 0
+
     is_active: bool = True
 
 
@@ -27,10 +38,16 @@ class ProductUpdate(BaseModel):
     description: str | None = None
     brand: str | None = None
     category_id: str | None = None
-    price: float | None = None
     mrp: float | None = None
+    price: float | None = None
+    discount_pct: float | None = None
+    discount_on: str | None = None
     images: list[str] | None = None
-    colors: list[str] | None = None
+    colors: list[ColorVariant] | None = None
     sizes: list[str] | None = None
-    variants: list[Variant] | None = None
+    stock: int | None = None
+    low_stock_threshold: int | None = None
+    rating: float | None = None
+    review_count: int | None = None
+    sold_count: int | None = None
     is_active: bool | None = None
