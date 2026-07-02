@@ -12,7 +12,7 @@ router = APIRouter(prefix="/products", tags=["products"])
 
 
 def _total_stock(doc: dict) -> int:
-    colors = doc.get("colors") or []
+    colors = [c for c in (doc.get("colors") or []) if isinstance(c, dict)]
     if colors:
         return sum(int(c.get("stock", 0)) for c in colors)
     return int(doc.get("stock", 0))
@@ -20,6 +20,8 @@ def _total_stock(doc: dict) -> int:
 
 def _decorate(doc: dict) -> dict:
     d = serialize(doc)
+    # drop any legacy string colours so the client always gets variant objects
+    d["colors"] = [c for c in (d.get("colors") or []) if isinstance(c, dict)]
     d.update(product_final_price(d))
     stock = _total_stock(d)
     d["total_stock"] = stock
