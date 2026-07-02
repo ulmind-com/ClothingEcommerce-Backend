@@ -1,0 +1,12 @@
+fastapi==0.115.6
+uvicorn==0.34.0
+motor==3.6.0
+pydantic>=2.12.0
+pydantic-settings>=2.7.0
+email-validator==2.2.0
+PyJWT==2.10.1
+python-multipart==0.0.20
+razorpay==1.4.2
+cloudinary==1.41.0
+# firebase-admin -> added in Phase 6 (push notifications); pulls grpcio which
+# lacks a cp314 wheel today, so kept out of the base install for now.
