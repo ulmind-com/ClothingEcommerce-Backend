@@ -7,6 +7,7 @@ email-validator==2.2.0
 PyJWT==2.10.1
 python-multipart==0.0.20
 razorpay==1.4.2
+setuptools==75.6.0  # razorpay 1.4.2 needs pkg_resources (removed in setuptools 81+)
 cloudinary==1.41.0
 # firebase-admin -> added in Phase 6 (push notifications); pulls grpcio which
 # lacks a cp314 wheel today, so kept out of the base install for now.
