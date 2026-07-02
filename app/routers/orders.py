@@ -98,15 +98,9 @@ async def _decrement_stock(db, order_items):
             for c in colors:
                 if c.get("name") == it["color"]:
                     c["stock"] = max(0, int(c.get("stock", 0)) - it["qty"])
-            await db.products.update_one(
-                {"_id": prod["_id"]},
-                {"$set": {"colors": colors}, "$inc": {"sold_count": it["qty"]}},
-            )
+            await db.products.update_one({"_id": prod["_id"]}, {"$set": {"colors": colors}})
         else:
-            await db.products.update_one(
-                {"_id": prod["_id"]},
-                {"$inc": {"stock": -it["qty"], "sold_count": it["qty"]}},
-            )
+            await db.products.update_one({"_id": prod["_id"]}, {"$inc": {"stock": -it["qty"]}})
 
 
 @router.post("")
@@ -222,6 +216,15 @@ async def update_status(order_id: str, status: str = Body(..., embed=True)):
     )
     if not res:
         raise HTTPException(status_code=404, detail="Order not found")
+
+    # Count units sold once, when the order is delivered.
+    if status == "delivered" and not res.get("sold_counted"):
+        for it in res.get("items", []):
+            await db.products.update_one(
+                {"_id": to_object_id(it["product_id"])}, {"$inc": {"sold_count": it["qty"]}}
+            )
+        await db.orders.update_one({"_id": res["_id"]}, {"$set": {"sold_counted": True}})
+
     await fcm_service.notify_user(db, res["user_id"], "Order update",
                                   STATUS_MSG.get(status, f"Status: {status}"), {"order_id": order_id})
     return serialize(res)

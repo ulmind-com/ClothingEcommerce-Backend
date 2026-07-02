@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from app.db.mongodb import get_db
@@ -16,6 +16,13 @@ class ReviewIn(BaseModel):
     text: str = ""
 
 
+async def _has_delivered(db, user_id: str, product_id: str) -> bool:
+    order = await db.orders.find_one(
+        {"user_id": user_id, "status": "delivered", "items.product_id": product_id}
+    )
+    return order is not None
+
+
 @router.get("")
 async def list_reviews(product_id: str):
     db = get_db()
@@ -27,9 +34,21 @@ async def list_reviews(product_id: str):
     return [serialize(d) for d in docs]
 
 
+@router.get("/can-review")
+async def can_review(product_id: str, user: dict = Depends(get_current_user)):
+    db = get_db()
+    already = await db.reviews.find_one({"product_id": product_id, "user_id": user["id"]})
+    delivered = await _has_delivered(db, user["id"], product_id)
+    return {"can": delivered and not already, "delivered": delivered, "already": bool(already)}
+
+
 @router.post("")
 async def add_review(body: ReviewIn, user: dict = Depends(get_current_user)):
     db = get_db()
+    if not await _has_delivered(db, user["id"], body.product_id):
+        raise HTTPException(status_code=403, detail="You can review only after your order is delivered")
+    if await db.reviews.find_one({"product_id": body.product_id, "user_id": user["id"]}):
+        raise HTTPException(status_code=409, detail="You already reviewed this product")
     doc = {
         "product_id": body.product_id,
         "user_id": user["id"],
