@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from app.db.mongodb import get_db
-from app.deps import get_current_user, require_admin
+from app.deps import get_current_user, get_optional_user, require_admin
 from app.models.common import serialize, to_object_id
 
 router = APIRouter(prefix="/reviews", tags=["reviews"])
@@ -44,8 +44,14 @@ async def _recompute(db, product_id: str) -> dict:
     return {"rating": avg, "review_count": count}
 
 
-def _public(doc: dict) -> dict:
-    """Serialize a review for public consumption (hide voter identities)."""
+def _public(doc: dict, viewer_id: str | None = None) -> dict:
+    """Serialize a review for public consumption (hide voter identities).
+
+    If viewer_id is given, expose that viewer's own vote as `my_vote` so the
+    client can render the filled thumb after a reload.
+    """
+    helpful_by = doc.get("helpful_by", []) or []
+    unhelpful_by = doc.get("unhelpful_by", []) or []
     out = serialize(doc)
     out.pop("helpful_by", None)
     out.pop("unhelpful_by", None)
@@ -54,11 +60,20 @@ def _public(doc: dict) -> dict:
     out.setdefault("tags", [])
     out.setdefault("helpful_count", 0)
     out.setdefault("unhelpful_count", 0)
+    out["my_vote"] = (
+        "up" if viewer_id and viewer_id in helpful_by
+        else "down" if viewer_id and viewer_id in unhelpful_by
+        else None
+    )
     return out
 
 
 @router.get("")
-async def list_reviews(product_id: str, rating: int | None = None):
+async def list_reviews(
+    product_id: str,
+    rating: int | None = None,
+    viewer: dict | None = Depends(get_optional_user),
+):
     db = get_db()
     query: dict = {"product_id": product_id}
     if rating in (1, 2, 3, 4, 5):
@@ -69,7 +84,8 @@ async def list_reviews(product_id: str, rating: int | None = None):
         .sort("created_at", -1)
         .to_list(length=200)
     )
-    return [_public(d) for d in docs]
+    viewer_id = viewer["id"] if viewer else None
+    return [_public(d, viewer_id) for d in docs]
 
 
 @router.get("/summary")
@@ -147,7 +163,11 @@ async def vote_review(review_id: str, body: VoteIn, user: dict = Depends(get_cur
             "unhelpful_count": len(unhelpful_by),
         }},
     )
-    return {"helpful_count": len(helpful_by), "unhelpful_count": len(unhelpful_by)}
+    return {
+        "helpful_count": len(helpful_by),
+        "unhelpful_count": len(unhelpful_by),
+        "my_vote": "helpful" if body.helpful else "unhelpful",
+    }
 
 
 @router.get("/admin/all", dependencies=[Depends(require_admin)])
