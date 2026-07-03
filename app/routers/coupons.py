@@ -99,6 +99,46 @@ async def delete_coupon(coupon_id: str):
     return {"deleted": True}
 
 
+@router.post("/applicable")
+async def applicable_coupons(
+    subtotal: float = Body(0, embed=True),
+    user: dict = Depends(get_current_user),
+):
+    """Return every live coupon ranked for this cart subtotal.
+
+    - `applicable` coupons (subtotal meets min_order) carry their computed
+      `discount`, sorted best-saving first — the client auto-applies `best_code`.
+    - `locked` coupons carry `needed_more` (how much more to add to unlock),
+      shown greyed out (Flipkart/Amazon style).
+    """
+    db = get_db()
+    docs = await db.coupons.find({"active": True}).to_list(length=500)
+    offers = []
+    for c in docs:
+        if not _in_window(c):
+            continue
+        min_order = c.get("min_order", 0) or 0
+        applicable = subtotal >= min_order
+        discount = coupon_discount(c, subtotal) if applicable else 0.0
+        offers.append({
+            "code": c["code"],
+            "type": c.get("type", "percent"),
+            "value": c.get("value", 0),
+            "min_order": min_order,
+            "max_discount": c.get("max_discount", 0),
+            "description": c.get("description", ""),
+            "applicable": applicable and discount > 0,
+            "discount": discount,
+            "needed_more": round(max(0.0, min_order - subtotal), 2) if not applicable else 0.0,
+        })
+
+    # Best usable saving first; then locked ones by how close they are to unlocking.
+    offers.sort(key=lambda o: (not o["applicable"], -o["discount"], o["needed_more"]))
+    best = next((o["code"] for o in offers if o["applicable"]), None)
+    best_discount = next((o["discount"] for o in offers if o["applicable"]), 0.0)
+    return {"offers": offers, "best_code": best, "best_discount": best_discount}
+
+
 @router.post("/validate")
 async def validate_coupon(
     code: str = Body(..., embed=True),
