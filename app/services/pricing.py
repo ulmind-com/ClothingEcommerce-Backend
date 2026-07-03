@@ -18,6 +18,22 @@ async def save_settings(db, settings: Settings) -> Settings:
     return settings
 
 
+def coupon_discount(coupon: dict, subtotal: float) -> float:
+    """Compute the discount a coupon gives on a subtotal (respecting min/cap)."""
+    if not coupon:
+        return 0.0
+    if subtotal < coupon.get("min_order", 0):
+        return 0.0
+    if coupon.get("type") == "flat":
+        return round(min(coupon.get("value", 0), subtotal), 2)
+    # percent
+    disc = subtotal * coupon.get("value", 0) / 100
+    cap = coupon.get("max_discount", 0)
+    if cap and cap > 0:
+        disc = min(disc, cap)
+    return round(disc, 2)
+
+
 def haversine_km(lat1, lng1, lat2, lng2) -> float:
     r = 6371.0
     p1, p2 = math.radians(lat1), math.radians(lat2)

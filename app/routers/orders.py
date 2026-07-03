@@ -7,9 +7,11 @@ from app.db.mongodb import get_db
 from app.deps import get_current_user, require_admin
 from app.models.common import serialize, to_object_id
 from app.models.order import OrderCreate, OrderVerify
+from app.routers.coupons import get_coupon
 from app.services import fcm_service, razorpay_service
 from app.services.pricing import (
     compute_delivery,
+    coupon_discount,
     get_settings,
     haversine_km,
     product_final_price,
@@ -17,7 +19,6 @@ from app.services.pricing import (
 
 router = APIRouter(prefix="/orders", tags=["orders"])
 
-COUPONS = {"WELCOMEOFFER": 0.10}
 STAGES = ["placed", "confirmed", "shipped", "out_for_delivery", "delivered"]
 
 STATUS_MSG = {
@@ -51,8 +52,8 @@ async def _build_bill(db, items_in, address, coupon):
             }
         )
 
-    rate = COUPONS.get((coupon or "").upper(), 0.0)
-    discount = round(subtotal * rate, 2)
+    coupon_doc = await get_coupon(db, coupon)
+    discount = coupon_discount(coupon_doc, subtotal) if coupon_doc else 0.0
 
     # distance-based delivery
     distance = None
@@ -75,7 +76,7 @@ async def _build_bill(db, items_in, address, coupon):
         "tax_rate": settings.tax_rate,
         "total": total,
         "currency": settings.currency,
-        "coupon_applied": rate > 0,
+        "coupon_applied": discount > 0,
     }
     return order_items, bill
 

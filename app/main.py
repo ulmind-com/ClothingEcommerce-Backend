@@ -7,7 +7,9 @@ from app.core.config import settings
 from app.db.mongodb import close_mongo_connection, connect_to_mongo
 from app.routers import (
     auth,
+    banners,
     categories,
+    coupons,
     orders,
     products,
     reviews,
@@ -41,6 +43,8 @@ app.include_router(products.router)
 app.include_router(orders.router)
 app.include_router(wishlist.router)
 app.include_router(reviews.router)
+app.include_router(coupons.router)
+app.include_router(banners.router)
 app.include_router(settings_router.router)
 app.include_router(users.router)
 app.include_router(upload.router)
