@@ -18,14 +18,35 @@ class CouponIn(BaseModel):
     min_order: float = 0
     max_discount: float = 0        # 0 = no cap (percent only)
     active: bool = True
-    valid_until: str | None = None  # ISO date string
+    valid_from: str | None = None   # ISO datetime — coupon starts showing/working
+    valid_until: str | None = None  # ISO datetime — auto-expires after this
     description: str = ""
+
+
+def _parse(dt: str | None):
+    if not dt:
+        return None
+    try:
+        return datetime.fromisoformat(dt)
+    except ValueError:
+        return None
+
+
+def _in_window(coupon: dict, now: datetime | None = None) -> bool:
+    now = now or datetime.now()
+    vf, vu = _parse(coupon.get("valid_from")), _parse(coupon.get("valid_until"))
+    if vf and now < vf:
+        return False
+    if vu and now > vu:
+        return False
+    return True
 
 
 async def get_coupon(db, code: str):
     if not code:
         return None
-    return await db.coupons.find_one({"code": code.strip().upper(), "active": True})
+    c = await db.coupons.find_one({"code": code.strip().upper(), "active": True})
+    return c if (c and _in_window(c)) else None
 
 
 @router.get("", dependencies=[Depends(require_admin)])
@@ -33,6 +54,14 @@ async def list_coupons():
     db = get_db()
     docs = await db.coupons.find().sort("created_at", -1).to_list(length=200)
     return [serialize(d) for d in docs]
+
+
+@router.get("/active")
+async def active_coupons():
+    """Public: coupons currently within their time window (for the Offers screen)."""
+    db = get_db()
+    docs = await db.coupons.find({"active": True}).sort("created_at", -1).to_list(length=200)
+    return [serialize(d) for d in docs if _in_window(d)]
 
 
 @router.post("", dependencies=[Depends(require_admin)])
@@ -80,12 +109,6 @@ async def validate_coupon(
     coupon = await get_coupon(db, code)
     if not coupon:
         return {"valid": False, "discount": 0, "message": "Invalid or expired coupon"}
-    if coupon.get("valid_until"):
-        try:
-            if datetime.fromisoformat(coupon["valid_until"]) < datetime.now():
-                return {"valid": False, "discount": 0, "message": "Coupon has expired"}
-        except ValueError:
-            pass
     if subtotal < coupon.get("min_order", 0):
         return {
             "valid": False,
