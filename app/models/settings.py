@@ -18,6 +18,7 @@ class DeliveryConfig(BaseModel):
 class ShopConfig(BaseModel):
     name: str = "Clothing Store"
     address: str = ""
+    phone: str = ""
     lat: float | None = None
     lng: float | None = None
 
