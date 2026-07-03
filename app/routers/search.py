@@ -261,15 +261,15 @@ def _build_facets(items: list[dict], cat_name_map: dict) -> dict:
             price_min = min(price_min, final)
             price_max = max(price_max, final)
 
-        # Rating
+        # Rating (cumulative: a 4.5 product counts in "4★ & above", "3★ & above", …
+        # so the facet counts match the min_rating >= X query results).
         rating = p.get("rating") or 0
-        for stars in [5, 4, 3, 2, 1]:
+        for stars in [4, 3, 2, 1]:
             if rating >= stars:
                 rating_counts[stars] += 1
-                break
 
-        # Discount
-        off = p.get("off_pct") or p.get("discount_pct") or 0
+        # Discount — use off_pct (the visible discount) to match the filter logic.
+        off = p.get("off_pct") or 0
         for threshold in sorted(discount_buckets.keys()):
             if off >= threshold:
                 discount_buckets[threshold] += 1

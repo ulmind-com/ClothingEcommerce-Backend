@@ -1,5 +1,3 @@
-import math
-import re
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -11,21 +9,6 @@ from app.models.product import ProductCreate, ProductUpdate
 from app.services.pricing import product_final_price
 
 router = APIRouter(prefix="/products", tags=["products"])
-
-# Nice ordering for size chips (XS, S, M, ... rather than alphabetical).
-_SIZE_ORDER = {s: i for i, s in enumerate(["XS", "S", "M", "L", "XL", "XXL", "XXXL", "3XL", "4XL"])}
-
-
-def _csv(value: str | None) -> list[str]:
-    return [x.strip() for x in value.split(",") if x.strip()] if value else []
-
-
-def _created_ts(p: dict) -> float:
-    dt = p.get("created_at")
-    try:
-        return dt.timestamp()
-    except Exception:
-        return 0.0
 
 
 def _total_stock(doc: dict) -> int:
