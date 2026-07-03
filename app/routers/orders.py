@@ -75,7 +75,8 @@ async def _build_bill(db, items_in, address, coupon):
         "tax": tax,
         "tax_rate": settings.tax_rate,
         "total": total,
-        "currency": settings.currency,
+        "currency": settings.currency,          # display symbol (₹)
+        "currency_code": settings.currency_code,  # ISO code for Razorpay (INR)
         "coupon_applied": discount > 0,
     }
     return order_items, bill
@@ -137,7 +138,9 @@ async def create_order(body: OrderCreate, user: dict = Depends(get_current_user)
         return {"order_id": our_id, "payment_method": "cod", "status": "confirmed", "bill": bill}
 
     try:
-        rp = razorpay_service.create_order(round(bill["total"] * 100), receipt=our_id)
+        rp = razorpay_service.create_order(
+            round(bill["total"] * 100), receipt=our_id, currency=bill.get("currency_code", "INR")
+        )
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e))
     await db.orders.update_one({"_id": res.inserted_id}, {"$set": {"razorpay_order_id": rp["id"]}})
@@ -147,7 +150,7 @@ async def create_order(body: OrderCreate, user: dict = Depends(get_current_user)
         "payment_method": "online",
         "razorpay_order_id": rp["id"],
         "amount": round(bill["total"] * 100),
-        "currency": bill["currency"],
+        "currency": bill.get("currency_code", "INR"),  # ISO code for Razorpay
         "key_id": app_settings.RAZORPAY_KEY_ID,
         "bill": bill,
         "prefill": {
