@@ -69,30 +69,40 @@ def product_final_price(product: dict) -> dict:
 
 
 def compute_delivery(settings: Settings, subtotal: float, distance_km: float | None) -> dict:
-    """Return {fee, distance_km, deliverable, reason}."""
-    d = settings.delivery
-    if d.free_above and subtotal >= d.free_above:
-        return {"fee": 0.0, "distance_km": distance_km, "deliverable": True, "free": True}
+    """Return {fee, distance_km, deliverable, free}.
 
-    if distance_km is None:
-        # no coordinates -> fall back to base fee beyond free radius
+    Precedence matters: the max serviceable distance is checked BEFORE any
+    free-delivery rule, so an address outside the service area is never marked
+    deliverable/free just because the order crossed the free-above threshold.
+    Distance is always rounded to one decimal for display.
+    """
+    d = settings.delivery
+    dist = round(distance_km, 1) if distance_km is not None else None
+
+    # 1. Outside the serviceable area -> not deliverable (0 = no limit).
+    if dist is not None and d.max_service_km and dist > d.max_service_km:
+        return {"fee": 0.0, "distance_km": dist, "deliverable": False, "free": False}
+
+    # 2. Free delivery above an order-value threshold.
+    if d.free_above and subtotal >= d.free_above:
+        return {"fee": 0.0, "distance_km": dist, "deliverable": True, "free": True}
+
+    # 3. No coordinates -> base fee fallback.
+    if dist is None:
         return {"fee": round(d.base_fee, 2), "distance_km": None, "deliverable": True, "free": d.base_fee == 0}
 
-    if distance_km > d.max_service_km:
-        return {"fee": 0.0, "distance_km": round(distance_km, 1), "deliverable": False, "free": False}
+    # 4. Within the free radius.
+    if dist <= d.free_radius_km:
+        return {"fee": 0.0, "distance_km": dist, "deliverable": True, "free": True}
 
-    if distance_km <= d.free_radius_km:
-        return {"fee": 0.0, "distance_km": round(distance_km, 1), "deliverable": True, "free": True}
-
-    # slab based if configured
+    # 5. Slab-based pricing (overrides per-km when configured).
     if d.slabs:
         for slab in sorted(d.slabs, key=lambda s: s.up_to_km):
-            if distance_km <= slab.up_to_km:
-                return {"fee": round(slab.fee, 2), "distance_km": round(distance_km, 1), "deliverable": True, "free": False}
-        # beyond last slab -> use last slab fee
+            if dist <= slab.up_to_km:
+                return {"fee": round(slab.fee, 2), "distance_km": dist, "deliverable": True, "free": slab.fee == 0}
         last = max(d.slabs, key=lambda s: s.up_to_km)
-        return {"fee": round(last.fee, 2), "distance_km": round(distance_km, 1), "deliverable": True, "free": False}
+        return {"fee": round(last.fee, 2), "distance_km": dist, "deliverable": True, "free": last.fee == 0}
 
-    # per-km beyond free radius
-    fee = d.base_fee + (distance_km - d.free_radius_km) * d.per_km_rate
-    return {"fee": round(fee, 2), "distance_km": round(distance_km, 1), "deliverable": True, "free": False}
+    # 6. Per-km charge beyond the free radius.
+    fee = d.base_fee + (dist - d.free_radius_km) * d.per_km_rate
+    return {"fee": round(fee, 2), "distance_km": dist, "deliverable": True, "free": fee == 0}
