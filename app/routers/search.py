@@ -159,8 +159,8 @@ async def search_products(
     if min_rating is not None:
         query["rating"] = {"$gte": min_rating}
 
-    if min_discount is not None and min_discount > 0:
-        query["discount_pct"] = {"$gte": min_discount}
+    # NOTE: discount is filtered at the application layer using off_pct
+    # (actual visible discount from MRP), not discount_pct (admin-set field).
 
     # --- Fetch products -----------------------------------------------------
     sort_field, sort_dir = _sort_key(sort)
@@ -171,6 +171,10 @@ async def search_products(
     # Filter in-stock at application layer (since stock may be computed)
     if in_stock:
         products = [p for p in products if p["in_stock"]]
+
+    # Filter discount at application layer using off_pct (the visible discount %)
+    if min_discount is not None and min_discount > 0:
+        products = [p for p in products if (p.get("off_pct") or 0) >= min_discount]
 
     # Total count for pagination
     total = await db.products.count_documents(query)
