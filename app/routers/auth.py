@@ -5,8 +5,14 @@ from fastapi import APIRouter, Depends, HTTPException
 from app.core.security import create_access_token, hash_password, verify_password
 from app.db.mongodb import get_db
 from app.deps import get_current_user
-from app.models.common import serialize
-from app.models.user import AuthResponse, UserLogin, UserPublic, UserRegister
+from app.models.common import serialize, to_object_id
+from app.models.user import (
+    AuthResponse,
+    ProfileUpdate,
+    UserLogin,
+    UserPublic,
+    UserRegister,
+)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -17,6 +23,7 @@ def _public(doc: dict) -> UserPublic:
         name=doc["name"],
         email=doc["email"],
         phone=doc.get("phone"),
+        avatar=doc.get("avatar"),
         role=doc.get("role", "user"),
     )
 
@@ -58,3 +65,19 @@ async def login(body: UserLogin):
 @router.get("/me", response_model=UserPublic)
 async def me(user: dict = Depends(get_current_user)):
     return _public(user)
+
+
+@router.patch("/me", response_model=UserPublic)
+async def update_me(body: ProfileUpdate, user: dict = Depends(get_current_user)):
+    db = get_db()
+    updates: dict = {}
+    if body.name is not None:
+        updates["name"] = body.name.strip()
+    if body.phone is not None:
+        updates["phone"] = body.phone.strip() or None
+    if body.avatar is not None:
+        updates["avatar"] = body.avatar or None
+    if updates:
+        await db.users.update_one({"_id": to_object_id(user["id"])}, {"$set": updates})
+    doc = await db.users.find_one({"_id": to_object_id(user["id"])})
+    return _public(serialize(doc))

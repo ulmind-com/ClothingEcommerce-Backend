@@ -18,7 +18,14 @@ class UserPublic(BaseModel):
     name: str
     email: EmailStr
     phone: str | None = None
+    avatar: str | None = None
     role: str = "user"
+
+
+class ProfileUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=80)
+    phone: str | None = None
+    avatar: str | None = None
 
 
 class AuthResponse(BaseModel):

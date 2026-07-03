@@ -29,3 +29,16 @@ async def upload_review_image(file: UploadFile = File(...)):
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e))
     return {"url": url}
+
+
+@router.post("/user-image", dependencies=[Depends(get_current_user)])
+async def upload_user_image(file: UploadFile = File(...)):
+    """Any signed-in user can upload their profile picture."""
+    if not file.content_type or not file.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="File must be an image")
+    data = await file.read()
+    try:
+        url = upload_image(data, folder="clothing/users")
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    return {"url": url}
