@@ -103,6 +103,7 @@ def compute_delivery(settings: Settings, subtotal: float, distance_km: float | N
         last = max(d.slabs, key=lambda s: s.up_to_km)
         return {"fee": round(last.fee, 2), "distance_km": dist, "deliverable": True, "free": last.fee == 0}
 
-    # 6. Per-km charge beyond the free radius.
-    fee = d.base_fee + (dist - d.free_radius_km) * d.per_km_rate
+    # 6. Beyond the free radius -> base fee + per-km on the FULL distance
+    #    (the free radius only decides free-vs-paid, it is NOT subtracted).
+    fee = d.base_fee + dist * d.per_km_rate
     return {"fee": round(fee, 2), "distance_km": dist, "deliverable": True, "free": fee == 0}
