@@ -2,19 +2,22 @@
 Advanced product search with faceted filters.
 Flipkart-style: returns products + facet counts for every filter dimension
 so the client can render counts like  Nike (42)  in the filter panel.
+
+Also manages trending search terms (admin-configurable).
 """
 
 import math
 import re
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 
 from app.db.mongodb import get_db
+from app.deps import require_admin
 from app.models.common import serialize, to_object_id
 from app.services.pricing import product_final_price
 
-router = APIRouter(prefix="/products/search", tags=["search"])
+router = APIRouter(prefix="/search", tags=["search"])
 
 # Nice ordering for size chips (XS, S, M, ... rather than alphabetical).
 _SIZE_ORDER = {s: i for i, s in enumerate(
@@ -23,6 +26,8 @@ _SIZE_ORDER = {s: i for i, s in enumerate(
      "6", "7", "8", "9", "10", "11", "12",
      "Free Size"]
 )}
+
+_TRENDING_KEY = {"_id": "trending_searches"}
 
 
 def _csv(value: str | None) -> list[str]:
@@ -68,6 +73,39 @@ def _sort_key(sort: str):
     return mapping.get(sort, ("created_at", -1))
 
 
+# ─── Trending searches (admin-configurable) ────────────────────────────────
+
+
+@router.get("/trending")
+async def get_trending():
+    """Public: return the list of trending search terms configured by admin."""
+    db = get_db()
+    doc = await db.settings.find_one(_TRENDING_KEY)
+    if not doc:
+        return {"terms": []}
+    return {"terms": doc.get("terms", [])}
+
+
+@router.put("/trending", dependencies=[Depends(require_admin)])
+async def set_trending(body: dict):
+    """Admin: set the list of trending search terms.
+    Body: { "terms": ["Summer Collection", "T-Shirts", ...] }
+    """
+    db = get_db()
+    terms = body.get("terms", [])
+    # Ensure it's a list of strings
+    terms = [str(t).strip() for t in terms if str(t).strip()][:20]
+    await db.settings.update_one(
+        _TRENDING_KEY,
+        {"$set": {"terms": terms}},
+        upsert=True,
+    )
+    return {"terms": terms}
+
+
+# ─── Product search with filters ──────────────────────────────────────────
+
+
 @router.get("")
 async def search_products(
     q: str | None = Query(default=None),
@@ -90,11 +128,12 @@ async def search_products(
     query: dict = {"is_active": True}
 
     if q:
-        # Use MongoDB text search if text index exists, else regex fallback
-        try:
-            query["$text"] = {"$search": q}
-        except Exception:
-            query["title"] = {"$regex": re.escape(q), "$options": "i"}
+        # Use regex fallback for search (text index may not be present)
+        query["$or"] = [
+            {"title": {"$regex": re.escape(q), "$options": "i"}},
+            {"brand": {"$regex": re.escape(q), "$options": "i"}},
+            {"description": {"$regex": re.escape(q), "$options": "i"}},
+        ]
 
     if category_id:
         cat_ids = await _category_ids_with_children(db, category_id)
@@ -141,7 +180,11 @@ async def search_products(
     # we fetch a broader set and compute facets in Python.
     facet_query: dict = {"is_active": True}
     if q:
-        facet_query["$text"] = {"$search": q}
+        facet_query["$or"] = [
+            {"title": {"$regex": re.escape(q), "$options": "i"}},
+            {"brand": {"$regex": re.escape(q), "$options": "i"}},
+            {"description": {"$regex": re.escape(q), "$options": "i"}},
+        ]
     if category_id:
         facet_query["category_id"] = query.get("category_id", {"$in": [category_id]})
 
@@ -149,7 +192,22 @@ async def search_products(
     facet_docs = await facet_cursor.to_list(length=500)
     facet_items = [_decorate(d) for d in facet_docs]
 
-    facets = _build_facets(facet_items)
+    # Resolve category names
+    cat_ids_set = set()
+    for p in facet_items:
+        cid = p.get("category_id")
+        if cid:
+            cat_ids_set.add(cid)
+
+    cat_name_map = {}
+    if cat_ids_set:
+        cat_docs = await db.categories.find(
+            {"_id": {"$in": [to_object_id(cid) for cid in cat_ids_set if len(cid) == 24]}}
+        ).to_list(length=200)
+        for cd in cat_docs:
+            cat_name_map[str(cd["_id"])] = cd.get("name", "")
+
+    facets = _build_facets(facet_items, cat_name_map)
 
     return {
         "products": products,
@@ -158,12 +216,12 @@ async def search_products(
     }
 
 
-def _build_facets(items: list[dict]) -> dict:
+def _build_facets(items: list[dict], cat_name_map: dict) -> dict:
     """Compute facet counts from a list of decorated product dicts."""
     brand_counts: dict[str, int] = {}
     size_counts: dict[str, int] = {}
     color_counts: dict[str, dict] = {}  # name -> {hex, count}
-    category_ids: dict[str, int] = {}
+    category_counts: dict[str, int] = {}
     rating_counts = {5: 0, 4: 0, 3: 0, 2: 0, 1: 0}
     discount_buckets = {10: 0, 20: 0, 30: 0, 40: 0, 50: 0, 60: 0, 70: 0}
     price_min = float("inf")
@@ -191,7 +249,7 @@ def _build_facets(items: list[dict]) -> dict:
         # Category
         cat_id = p.get("category_id")
         if cat_id:
-            category_ids[cat_id] = category_ids.get(cat_id, 0) + 1
+            category_counts[cat_id] = category_counts.get(cat_id, 0) + 1
 
         # Price
         final = p.get("final_price") or p.get("price") or 0
@@ -232,7 +290,10 @@ def _build_facets(items: list[dict]) -> dict:
             "min": price_min if price_min != float("inf") else 0,
             "max": price_max,
         },
-        "categories": [{"id": cid, "count": cnt} for cid, cnt in category_ids.items()],
+        "categories": [
+            {"id": cid, "name": cat_name_map.get(cid, cid), "count": cnt}
+            for cid, cnt in category_counts.items()
+        ],
         "ratings": [
             {"stars": s, "count": rating_counts[s], "label": f"{s}★ & above"}
             for s in [4, 3, 2, 1]
