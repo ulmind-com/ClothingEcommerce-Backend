@@ -25,6 +25,12 @@ class Settings(BaseSettings):
 
     FIREBASE_CREDENTIALS: str = ""
 
+    # AI recommendations (Groq — OpenAI-compatible). Empty key => heuristic only.
+    GROQ_API_KEY: str = ""
+    GROQ_MODEL: str = "llama-3.3-70b-versatile"
+    GROQ_TIMEOUT: float = 8.0
+    RECS_USE_LLM: bool = True
+
     @property
     def cors_list(self) -> list[str]:
         return [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]
