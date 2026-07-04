@@ -14,7 +14,7 @@ from app.services.pricing import (
     coupon_discount,
     get_settings,
     haversine_km,
-    product_final_price,
+    resolve_price,
 )
 
 router = APIRouter(prefix="/orders", tags=["orders"])
@@ -38,7 +38,8 @@ async def _build_bill(db, items_in, address, coupon):
         prod = await db.products.find_one({"_id": to_object_id(it.product_id)})
         if not prod or not prod.get("is_active", True):
             raise HTTPException(status_code=400, detail="Product unavailable")
-        unit = product_final_price(prod)["final_price"]
+        # Price for the exact colour + size the customer chose (variant-aware).
+        unit = resolve_price(prod, it.color, it.size)["final_price"]
         subtotal += unit * it.qty
         order_items.append(
             {
@@ -99,7 +100,13 @@ async def _decrement_stock(db, order_items):
         if colors and it.get("color"):
             for c in colors:
                 if c.get("name") == it["color"]:
-                    c["stock"] = max(0, int(c.get("stock", 0)) - it["qty"])
+                    sizes = c.get("sizes") or []
+                    if sizes and it.get("size"):
+                        for ss in sizes:
+                            if ss.get("size") == it["size"]:
+                                ss["stock"] = max(0, int(ss.get("stock", 0)) - it["qty"])
+                    else:
+                        c["stock"] = max(0, int(c.get("stock", 0)) - it["qty"])
             await db.products.update_one({"_id": prod["_id"]}, {"$set": {"colors": colors}})
         else:
             await db.products.update_one({"_id": prod["_id"]}, {"$inc": {"stock": -it["qty"]}})

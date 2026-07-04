@@ -22,9 +22,16 @@ def now():
     return datetime.now(timezone.utc)
 
 
-def col(name, hex_, stock):
-    """A colour variant (images added later from admin)."""
-    return {"name": name, "hex": hex_, "images": [], "stock": stock}
+def col(name, hex_, stock, price=None, mrp=None, sizes=None):
+    """A colour variant (images added later from admin). Optional per-colour
+    price/mrp override + per-size rows."""
+    return {"name": name, "hex": hex_, "images": [], "price": price, "mrp": mrp,
+            "stock": stock, "sizes": sizes or []}
+
+
+def sz(size, stock, price=None, mrp=None):
+    """A per-size row inside a colour (optional price/mrp override + stock)."""
+    return {"size": size, "price": price, "mrp": mrp, "stock": stock}
 
 
 async def main():
@@ -200,9 +207,35 @@ async def main():
         {"$set": {"rating": 0, "review_count": 0, "sold_count": 0}},
     )
 
+    # Showcase the variant matrix: per-colour + per-size price & stock overrides.
+    # (Prices fall back to the colour, then the product, when left as None.)
+    showcase = {
+        "Men's Cotton Crew Tee": [  # base price 799 — bigger sizes cost a bit more
+            col("Black", "#1C1613", 0, sizes=[sz("S", 10), sz("M", 12), sz("L", 8), sz("XL", 4, price=899), sz("XXL", 2, price=999)]),
+            col("White", "#FFFFFF", 0, sizes=[sz("S", 6), sz("M", 9), sz("L", 5), sz("XL", 3, price=899)]),
+            col("Navy", "#1F2A44", 0, price=849, sizes=[sz("M", 7), sz("L", 5), sz("XL", 2, price=949)]),  # whole colour pricier
+            col("Olive", "#708238", 0, price=899, sizes=[sz("M", 3), sz("L", 2)]),
+        ],
+        "Men's Slim Fit Jeans": [  # base 1999 — colour + size price differences
+            col("Blue", "#2F6BFF", 0, sizes=[sz("30", 5), sz("32", 8, price=2199), sz("34", 4, price=2299), sz("36", 2, price=2399)]),
+            col("Black", "#1C1613", 0, price=2099, sizes=[sz("30", 3), sz("32", 5), sz("34", 2)]),
+            col("Grey", "#9AA0A6", 0, price=1899, sizes=[sz("32", 4), sz("34", 2)]),  # cheaper colour
+        ],
+        "Men's Running Sneakers": [  # base 3999 — per-size stock, a couple sold out
+            col("Orange", "#F26A21", 0, sizes=[sz("7", 3), sz("8", 5), sz("9", 0), sz("10", 2), sz("11", 1)]),
+            col("Black", "#1C1613", 0, sizes=[sz("8", 6), sz("9", 4), sz("10", 3), sz("11", 0)]),
+            col("Blue", "#2F6BFF", 0, price=4299, sizes=[sz("8", 2), sz("9", 3), sz("10", 1)]),  # premium colourway
+        ],
+    }
+    variants = 0
+    for title, cols in showcase.items():
+        r = await db.products.update_one({"title": title}, {"$set": {"colors": cols}})
+        variants += r.modified_count
+
     total = await db.products.count_documents({})
     cats = await db.categories.count_documents({})
     print(f"Inserted {inserted} new products; reset dynamic fields on {reset.modified_count} demo products.")
+    print(f"Applied per-colour/per-size variant pricing to {variants} showcase products.")
     print(f"Catalogue now has {total} products, {cats} categories.")
     print("Done. rating/reviews/sold stay dynamic. Add images from the admin panel.")
 

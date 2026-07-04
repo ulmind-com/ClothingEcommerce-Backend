@@ -6,24 +6,21 @@ from app.db.mongodb import get_db
 from app.deps import require_admin
 from app.models.common import serialize, to_object_id
 from app.models.product import ProductCreate, ProductUpdate
-from app.services.pricing import product_final_price
+from app.services.pricing import price_span, total_stock
 
 router = APIRouter(prefix="/products", tags=["products"])
 
 
 def _total_stock(doc: dict) -> int:
-    colors = [c for c in (doc.get("colors") or []) if isinstance(c, dict)]
-    if colors:
-        return sum(int(c.get("stock", 0)) for c in colors)
-    return int(doc.get("stock", 0))
+    return total_stock(doc)
 
 
 def _decorate(doc: dict) -> dict:
     d = serialize(doc)
     # drop any legacy string colours so the client always gets variant objects
     d["colors"] = [c for c in (d.get("colors") or []) if isinstance(c, dict)]
-    d.update(product_final_price(d))
-    stock = _total_stock(d)
+    d.update(price_span(d))  # final_price + price_from/to + price_varies
+    stock = total_stock(d)
     d["total_stock"] = stock
     d["in_stock"] = stock > 0
     d["low_stock"] = 0 < stock <= (d.get("low_stock_threshold") or 5)

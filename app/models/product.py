@@ -1,11 +1,21 @@
 from pydantic import BaseModel, Field
 
 
+class SizeStock(BaseModel):
+    size: str                       # e.g. "M"
+    price: float | None = None      # per-size selling price (falls back to colour/base)
+    mrp: float | None = None        # per-size MRP (falls back to colour/base)
+    stock: int = 0                  # inventory for this colour + size
+
+
 class ColorVariant(BaseModel):
     name: str                       # e.g. "Orange"
     hex: str = "#000000"            # swatch colour
     images: list[str] = []          # images shown when this colour is picked
-    stock: int = 0                  # inventory for this colour
+    price: float | None = None      # per-colour selling price (falls back to base)
+    mrp: float | None = None        # per-colour MRP (falls back to base)
+    stock: int = 0                  # inventory for this colour (when it has no per-size rows)
+    sizes: list[SizeStock] = []     # per-size price + stock within this colour
 
 
 class ProductCreate(BaseModel):
