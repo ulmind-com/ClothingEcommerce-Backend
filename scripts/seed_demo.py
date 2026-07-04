@@ -22,16 +22,18 @@ def now():
     return datetime.now(timezone.utc)
 
 
-def col(name, hex_, stock, price=None, mrp=None, sizes=None):
+def col(name, hex_, stock, price=None, mrp=None, discount_pct=None, discount_on=None, sizes=None):
     """A colour variant (images added later from admin). Optional per-colour
-    price/mrp override + per-size rows."""
+    price/mrp/discount override + per-size rows."""
     return {"name": name, "hex": hex_, "images": [], "price": price, "mrp": mrp,
+            "discount_pct": discount_pct, "discount_on": discount_on,
             "stock": stock, "sizes": sizes or []}
 
 
-def sz(size, stock, price=None, mrp=None):
-    """A per-size row inside a colour (optional price/mrp override + stock)."""
-    return {"size": size, "price": price, "mrp": mrp, "stock": stock}
+def sz(size, stock, price=None, mrp=None, discount_pct=None, discount_on=None):
+    """A per-size row inside a colour (optional price/mrp/discount override + stock)."""
+    return {"size": size, "price": price, "mrp": mrp,
+            "discount_pct": discount_pct, "discount_on": discount_on, "stock": stock}
 
 
 async def main():
@@ -207,35 +209,47 @@ async def main():
         {"$set": {"rating": 0, "review_count": 0, "sold_count": 0}},
     )
 
-    # Showcase the variant matrix: per-colour + per-size price & stock overrides.
-    # (Prices fall back to the colour, then the product, when left as None.)
-    showcase = {
-        "Men's Cotton Crew Tee": [  # base price 799 — bigger sizes cost a bit more
-            col("Black", "#1C1613", 0, sizes=[sz("S", 10), sz("M", 12), sz("L", 8), sz("XL", 4, price=899), sz("XXL", 2, price=999)]),
-            col("White", "#FFFFFF", 0, sizes=[sz("S", 6), sz("M", 9), sz("L", 5), sz("XL", 3, price=899)]),
-            col("Navy", "#1F2A44", 0, price=849, sizes=[sz("M", 7), sz("L", 5), sz("XL", 2, price=949)]),  # whole colour pricier
-            col("Olive", "#708238", 0, price=899, sizes=[sz("M", 3), sz("L", 2)]),
-        ],
-        "Men's Slim Fit Jeans": [  # base 1999 — colour + size price differences
-            col("Blue", "#2F6BFF", 0, sizes=[sz("30", 5), sz("32", 8, price=2199), sz("34", 4, price=2299), sz("36", 2, price=2399)]),
-            col("Black", "#1C1613", 0, price=2099, sizes=[sz("30", 3), sz("32", 5), sz("34", 2)]),
-            col("Grey", "#9AA0A6", 0, price=1899, sizes=[sz("32", 4), sz("34", 2)]),  # cheaper colour
-        ],
-        "Men's Running Sneakers": [  # base 3999 — per-size stock, a couple sold out
-            col("Orange", "#F26A21", 0, sizes=[sz("7", 3), sz("8", 5), sz("9", 0), sz("10", 2), sz("11", 1)]),
-            col("Black", "#1C1613", 0, sizes=[sz("8", 6), sz("9", 4), sz("10", 3), sz("11", 0)]),
-            col("Blue", "#2F6BFF", 0, price=4299, sizes=[sz("8", 2), sz("9", 3), sz("10", 1)]),  # premium colourway
-        ],
-    }
+    # Feed EVERY colour-variant product with a per-size matrix + a little
+    # price/discount variety, so all products exercise the new config:
+    #   - biggest size costs ~10% more (size-level price)
+    #   - 2nd colour ~5% pricier (colour-level price)
+    #   - 3rd colour gets 10% off MRP (colour-level discount)
+    #   - first colour's first size gets 10% off (size-level discount)
+    #   - one size on the last colour is out of stock (realism)
+    # Products with no colour variants (or no sizes) are left as-is.
     variants = 0
-    for title, cols in showcase.items():
-        r = await db.products.update_one({"title": title}, {"$set": {"colors": cols}})
-        variants += r.modified_count
+    async for p in db.products.find({}):
+        colors = [c for c in (p.get("colors") or []) if isinstance(c, dict)]
+        base_sizes = p.get("sizes") or []
+        base_price = p.get("price") or 0
+        if not colors or not base_sizes or not base_price:
+            continue
+        new_colors = []
+        n_c, n_s = len(colors), len(base_sizes)
+        for ci, c in enumerate(colors):
+            colour_stock = int(c.get("stock", 0)) or (n_s * 4)
+            per = max(1, colour_stock // n_s)
+            rows = []
+            for si, s in enumerate(base_sizes):
+                price = round(base_price * 1.1) if si == n_s - 1 else None      # biggest size +10%
+                stock = 0 if (ci == n_c - 1 and si == n_s // 2) else per        # one size sold out
+                disc = 10 if (ci == 0 and si == 0) else None                    # size-level discount
+                on = "price" if disc else None
+                rows.append(sz(s, stock, price=price, discount_pct=disc, discount_on=on))
+            new_colors.append(col(
+                c.get("name", ""), c.get("hex", "#000000"), 0,
+                price=round(base_price * 1.05) if ci == 1 else None,            # 2nd colour pricier
+                discount_pct=10 if ci == 2 else None,                          # 3rd colour 10% off
+                discount_on="price" if ci == 2 else None,
+                sizes=rows,
+            ) | {"images": c.get("images", [])})
+        await db.products.update_one({"_id": p["_id"]}, {"$set": {"colors": new_colors}})
+        variants += 1
 
     total = await db.products.count_documents({})
     cats = await db.categories.count_documents({})
     print(f"Inserted {inserted} new products; reset dynamic fields on {reset.modified_count} demo products.")
-    print(f"Applied per-colour/per-size variant pricing to {variants} showcase products.")
+    print(f"Fed per-colour/per-size price+discount+stock to {variants} colour-variant products.")
     print(f"Catalogue now has {total} products, {cats} categories.")
     print("Done. rating/reviews/sold stay dynamic. Add images from the admin panel.")
 

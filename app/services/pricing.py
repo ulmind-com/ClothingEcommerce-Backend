@@ -64,38 +64,47 @@ def product_final_price(product: dict) -> dict:
     return {"final_price": final, "struck_price": struck, "off_pct": off}
 
 
-def _variant_base(product: dict, color=None, size=None) -> tuple:
-    """Resolve (price, mrp) for a colour+size with fallbacks: size -> colour -> base."""
+def _variant_params(product: dict, color=None, size=None) -> tuple:
+    """Resolve (price, mrp, discount_pct, discount_on) for a colour+size.
+    Fallback order for every field: size -> colour -> product base."""
     price = product.get("price") or 0
     mrp = product.get("mrp") or 0
+    disc = product.get("discount_pct") or 0
+    on = product.get("discount_on") or "price"
     for c in (product.get("colors") or []):
         if isinstance(c, dict) and c.get("name") == color:
             if c.get("price") is not None:
                 price = c["price"]
             if c.get("mrp") is not None:
                 mrp = c["mrp"]
+            if c.get("discount_pct") is not None:
+                disc = c["discount_pct"]
+            if c.get("discount_on"):
+                on = c["discount_on"]
             for ss in (c.get("sizes") or []):
                 if ss.get("size") == size:
                     if ss.get("price") is not None:
                         price = ss["price"]
                     if ss.get("mrp") is not None:
                         mrp = ss["mrp"]
+                    if ss.get("discount_pct") is not None:
+                        disc = ss["discount_pct"]
+                    if ss.get("discount_on"):
+                        on = ss["discount_on"]
                     break
             break
-    return price, mrp
+    return price, mrp, disc, on
 
 
 def resolve_price(product: dict, color=None, size=None) -> dict:
     """Display pricing for a specific colour + size selection."""
-    price, mrp = _variant_base(product, color, size)
-    final, struck, off = _apply(mrp, price, product.get("discount_pct") or 0, product.get("discount_on") or "price")
+    price, mrp, disc, on = _variant_params(product, color, size)
+    final, struck, off = _apply(mrp, price, disc, on)
     return {"final_price": final, "struck_price": struck, "off_pct": off}
 
 
 def _combos(product: dict) -> list[tuple]:
     """(final, struck, off) for every colour+size combination."""
-    disc = product.get("discount_pct") or 0
-    on = product.get("discount_on") or "price"
     out = []
     colors = [c for c in (product.get("colors") or []) if isinstance(c, dict)]
     if colors:
@@ -103,11 +112,13 @@ def _combos(product: dict) -> list[tuple]:
             sizes = c.get("sizes") or []
             targets = [s.get("size") for s in sizes] if sizes else [None]
             for sz in targets:
-                p, m = _variant_base(product, c.get("name"), sz)
-                out.append(_apply(m, p, disc, on))
+                p, m, d, o = _variant_params(product, c.get("name"), sz)
+                out.append(_apply(m, p, d, o))
     else:
-        out.append(_apply(product.get("mrp") or 0, product.get("price") or 0, disc, on))
-    return out or [_apply(product.get("mrp") or 0, product.get("price") or 0, disc, on)]
+        p, m, d, o = _variant_params(product, None, None)
+        out.append(_apply(m, p, d, o))
+    return out or [_apply(product.get("mrp") or 0, product.get("price") or 0,
+                          product.get("discount_pct") or 0, product.get("discount_on") or "price")]
 
 
 def price_span(product: dict) -> dict:
