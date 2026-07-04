@@ -10,6 +10,7 @@ from app.routers import (
     banners,
     categories,
     coupons,
+    home_sections,
     orders,
     products,
     recommendations,
@@ -52,6 +53,7 @@ app.include_router(users.router)
 app.include_router(upload.router)
 app.include_router(search.router)
 app.include_router(recommendations.router)
+app.include_router(home_sections.router)
 
 
 @app.get("/", tags=["health"])

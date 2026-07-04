@@ -131,12 +131,8 @@ def _finalize(candidates: list[dict], ordered_ids: list[str] | None, limit: int)
 
 # ── Endpoints ────────────────────────────────────────────────────────────────
 
-@router.get("/home")
-async def home_recommendations(
-    limit: int = Query(12, ge=1, le=30),
-    user: dict | None = Depends(get_optional_user),
-):
-    db = get_db()
+async def compute_home(db, user: dict | None, limit: int) -> list[dict]:
+    """Personalised home recommendations (reused by the home-layout builder)."""
     products = await _active_products(db)
     by_id = {p["id"]: p for p in products}
 
@@ -173,6 +169,14 @@ async def home_recommendations(
     cache_key = f"home:{user['id']}" if user else "home:anon"
     ordered = await recommender.rerank(context, candidates, limit, cache_key)
     return _finalize(candidates, ordered, limit)
+
+
+@router.get("/home")
+async def home_recommendations(
+    limit: int = Query(12, ge=1, le=30),
+    user: dict | None = Depends(get_optional_user),
+):
+    return await compute_home(get_db(), user, limit)
 
 
 @router.get("/similar/{product_id}")
