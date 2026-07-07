@@ -33,7 +33,9 @@ class ProductCreate(BaseModel):
     discount_pct: float = Field(default=0, ge=0, le=95)  # admin extra discount
     discount_on: str = "price"                  # "mrp" | "price"
 
-    tax_pct: float | None = None                # GST % for this product (None -> store default)
+    cgst: float | None = None                   # CGST % (same-state orders)
+    sgst: float | None = None                   # SGST % (same-state orders)
+    igst: float | None = None                   # IGST % (inter-state orders)
 
     images: list[str] = []                      # general gallery (no colour)
     colors: list[ColorVariant] = []             # colour-wise images + stock
@@ -58,7 +60,9 @@ class ProductUpdate(BaseModel):
     price: float | None = None
     discount_pct: float | None = None
     discount_on: str | None = None
-    tax_pct: float | None = None
+    cgst: float | None = None
+    sgst: float | None = None
+    igst: float | None = None
     images: list[str] | None = None
     colors: list[ColorVariant] | None = None
     sizes: list[str] | None = None

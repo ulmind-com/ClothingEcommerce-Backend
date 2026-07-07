@@ -32,9 +32,8 @@ STATUS_MSG = {
 
 async def _build_bill(db, items_in, address, coupon):
     settings = await get_settings(db)
-    default_pct = (settings.tax_rate or 0) * 100  # store-wide fallback GST %
     order_items = []
-    lines = []  # (line_total, tax_pct)
+    lines = []  # (line_total, {cgst, sgst, igst})
     subtotal = 0.0
     for it in items_in:
         prod = await db.products.find_one({"_id": to_object_id(it.product_id)})
@@ -44,9 +43,12 @@ async def _build_bill(db, items_in, address, coupon):
         unit = resolve_price(prod, it.color, it.size)["final_price"]
         line_total = unit * it.qty
         subtotal += line_total
-        pct = prod.get("tax_pct")
-        pct = float(pct) if pct is not None else default_pct  # per-product GST, else default
-        lines.append((line_total, pct))
+        comp = {
+            "cgst": float(prod.get("cgst") or 0),
+            "sgst": float(prod.get("sgst") or 0),
+            "igst": float(prod.get("igst") or 0),
+        }
+        lines.append((line_total, comp))
         order_items.append(
             {
                 "product_id": it.product_id,
@@ -55,7 +57,9 @@ async def _build_bill(db, items_in, address, coupon):
                 "qty": it.qty,
                 "color": it.color,
                 "size": it.size,
-                "tax_pct": pct,
+                "cgst": comp["cgst"],
+                "sgst": comp["sgst"],
+                "igst": comp["igst"],
                 "image": (prod.get("images") or [None])[0],
             }
         )
@@ -69,33 +73,44 @@ async def _build_bill(db, items_in, address, coupon):
         distance = haversine_km(settings.shop.lat, settings.shop.lng, address.lat, address.lng)
     deliv = compute_delivery(settings, subtotal - discount, distance)
 
-    # Per-product GST: tax each line at its own rate, on its post-discount share.
-    total_tax = 0.0
-    rate_map: dict[float, dict] = {}
-    for line_total, pct in lines:
-        share = (line_total / subtotal * discount) if subtotal else 0.0
-        line_taxable = max(0.0, line_total - share)
-        line_tax = line_taxable * pct / 100
-        total_tax += line_tax
-        r = rate_map.setdefault(pct, {"rate": pct, "taxable": 0.0, "amount": 0.0})
-        r["taxable"] += line_taxable
-        r["amount"] += line_tax
-    total_tax = round(total_tax, 2)
-
-    # Same-state order -> CGST + SGST split; different state -> IGST.
+    # Same-state order -> CGST + SGST from the product; different state -> IGST.
     shop_state = (settings.shop.state or "").strip().lower()
     dest_state = (getattr(address, "state", "") or "").strip().lower()
     interstate = bool(shop_state and dest_state and shop_state != dest_state)
+
+    total_cgst = total_sgst = total_igst = 0.0
+    tax_items = []
+    for oi, (line_total, comp) in zip(order_items, lines):
+        share = (line_total / subtotal * discount) if subtotal else 0.0
+        taxable = max(0.0, line_total - share)
+        if interstate:
+            i_cgst = i_sgst = 0.0
+            i_igst = round(taxable * comp["igst"] / 100, 2)
+        else:
+            i_cgst = round(taxable * comp["cgst"] / 100, 2)
+            i_sgst = round(taxable * comp["sgst"] / 100, 2)
+            i_igst = 0.0
+        total_cgst += i_cgst
+        total_sgst += i_sgst
+        total_igst += i_igst
+        rate = comp["igst"] if interstate else (comp["cgst"] + comp["sgst"])
+        tax_items.append({
+            "title": oi["title"], "qty": oi["qty"], "rate": rate,
+            "cgst": i_cgst, "sgst": i_sgst, "igst": i_igst,
+            "taxable": round(taxable, 2), "tax": round(i_cgst + i_sgst + i_igst, 2),
+        })
+    total_cgst = round(total_cgst, 2)
+    total_sgst = round(total_sgst, 2)
+    total_igst = round(total_igst, 2)
+    total_tax = round(total_cgst + total_sgst + total_igst, 2)
+
     gst = {
         "total": total_tax,
         "interstate": interstate,
-        "cgst": 0.0 if interstate else round(total_tax / 2, 2),
-        "sgst": 0.0 if interstate else round(total_tax / 2, 2),
-        "igst": total_tax if interstate else 0.0,
-        "rates": [
-            {"rate": v["rate"], "taxable": round(v["taxable"], 2), "amount": round(v["amount"], 2)}
-            for v in sorted(rate_map.values(), key=lambda x: x["rate"])
-        ],
+        "cgst": total_cgst,
+        "sgst": total_sgst,
+        "igst": total_igst,
+        "items": tax_items,  # per-product GST breakdown
     }
 
     total = round((subtotal - discount) + deliv["fee"] + total_tax, 2)
