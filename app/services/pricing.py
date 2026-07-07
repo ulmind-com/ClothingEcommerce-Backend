@@ -34,26 +34,6 @@ def coupon_discount(coupon: dict, subtotal: float) -> float:
     return round(disc, 2)
 
 
-def first_order_discount(cfg: dict, subtotal: float) -> float:
-    """Discount for a customer's first-ever order (separate from coupons).
-
-    `cfg` is the admin's FirstOrderConfig as a dict. Returns 0 when disabled or
-    the subtotal is below the configured minimum, so callers can add it safely.
-    """
-    if not cfg or not cfg.get("enabled"):
-        return 0.0
-    if subtotal < cfg.get("min_order", 0):
-        return 0.0
-    if cfg.get("type") == "flat":
-        return round(min(cfg.get("value", 0), subtotal), 2)
-    # percent
-    disc = subtotal * cfg.get("value", 0) / 100
-    cap = cfg.get("max_discount", 0)
-    if cap and cap > 0:
-        disc = min(disc, cap)
-    return round(disc, 2)
-
-
 def haversine_km(lat1, lng1, lat2, lng2) -> float:
     r = 6371.0
     p1, p2 = math.radians(lat1), math.radians(lat2)

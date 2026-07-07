@@ -4,11 +4,24 @@ from fastapi import APIRouter, Body, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from app.db.mongodb import get_db
-from app.deps import get_current_user, require_admin
+from app.deps import get_current_user, get_optional_user, require_admin
 from app.models.common import serialize, to_object_id
 from app.services.pricing import coupon_discount
 
 router = APIRouter(prefix="/coupons", tags=["coupons"])
+
+# A customer is on their first order until they have an order that reached at
+# least "confirmed" (paid online or COD). Used to gate first-order-only coupons.
+_FIRST_ORDER_DONE = ["confirmed", "shipped", "out_for_delivery", "delivered"]
+
+
+async def is_first_order(db, user_id: str | None) -> bool:
+    if not user_id:
+        return False
+    n = await db.orders.count_documents(
+        {"user_id": user_id, "status": {"$in": _FIRST_ORDER_DONE}}
+    )
+    return n == 0
 
 
 class CouponIn(BaseModel):
@@ -18,6 +31,7 @@ class CouponIn(BaseModel):
     min_order: float = 0
     max_discount: float = 0        # 0 = no cap (percent only)
     active: bool = True
+    first_order_only: bool = False  # usable only on the customer's first order
     valid_from: str | None = None   # ISO datetime — coupon starts showing/working
     valid_until: str | None = None  # ISO datetime — auto-expires after this
     description: str = ""
@@ -42,11 +56,20 @@ def _in_window(coupon: dict, now: datetime | None = None) -> bool:
     return True
 
 
-async def get_coupon(db, code: str):
+async def get_coupon(db, code: str, user_id: str | None = None):
+    """Fetch a live coupon by code.
+
+    A first-order-only coupon resolves only for a customer who is still on their
+    first order, so a returning user can't redeem it even by typing the code.
+    """
     if not code:
         return None
     c = await db.coupons.find_one({"code": code.strip().upper(), "active": True})
-    return c if (c and _in_window(c)) else None
+    if not c or not _in_window(c):
+        return None
+    if c.get("first_order_only") and not await is_first_order(db, user_id):
+        return None
+    return c
 
 
 @router.get("", dependencies=[Depends(require_admin)])
@@ -57,11 +80,20 @@ async def list_coupons():
 
 
 @router.get("/active")
-async def active_coupons():
-    """Public: coupons currently within their time window (for the Offers screen)."""
+async def active_coupons(user: dict | None = Depends(get_optional_user)):
+    """Public: coupons currently within their time window (for the Offers screen).
+
+    First-order-only coupons are hidden from returning users (and anonymous
+    visitors); a first-order customer still sees them.
+    """
     db = get_db()
+    first = await is_first_order(db, user["id"]) if user else False
     docs = await db.coupons.find({"active": True}).sort("created_at", -1).to_list(length=200)
-    return [serialize(d) for d in docs if _in_window(d)]
+    return [
+        serialize(d)
+        for d in docs
+        if _in_window(d) and (first or not d.get("first_order_only"))
+    ]
 
 
 @router.post("", dependencies=[Depends(require_admin)])
@@ -112,10 +144,15 @@ async def applicable_coupons(
       shown greyed out (Flipkart/Amazon style).
     """
     db = get_db()
+    first = await is_first_order(db, user["id"])
     docs = await db.coupons.find({"active": True}).to_list(length=500)
     offers = []
     for c in docs:
         if not _in_window(c):
+            continue
+        # First-order-only coupons never enter the pool for a returning user, so
+        # the auto-apply never picks one they can't actually redeem.
+        if c.get("first_order_only") and not first:
             continue
         min_order = c.get("min_order", 0) or 0
         applicable = subtotal >= min_order
@@ -127,6 +164,7 @@ async def applicable_coupons(
             "min_order": min_order,
             "max_discount": c.get("max_discount", 0),
             "description": c.get("description", ""),
+            "first_order_only": bool(c.get("first_order_only")),
             "applicable": applicable and discount > 0,
             "discount": discount,
             "needed_more": round(max(0.0, min_order - subtotal), 2) if not applicable else 0.0,
@@ -146,8 +184,14 @@ async def validate_coupon(
     user: dict = Depends(get_current_user),
 ):
     db = get_db()
-    coupon = await get_coupon(db, code)
+    coupon = await get_coupon(db, code, user["id"])
     if not coupon:
+        # Distinguish a first-order-only coupon rejected for a returning user, so
+        # the app can show a helpful message instead of a generic "invalid".
+        raw = await db.coupons.find_one({"code": code.strip().upper(), "active": True})
+        if raw and _in_window(raw) and raw.get("first_order_only"):
+            return {"valid": False, "discount": 0,
+                    "message": "This coupon is only valid on your first order"}
         return {"valid": False, "discount": 0, "message": "Invalid or expired coupon"}
     if subtotal < coupon.get("min_order", 0):
         return {
