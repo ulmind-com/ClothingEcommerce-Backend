@@ -12,6 +12,7 @@ from app.services import fcm_service, razorpay_service
 from app.services.pricing import (
     compute_delivery,
     coupon_discount,
+    first_order_discount,
     get_settings,
     haversine_km,
     resolve_price,
@@ -20,6 +21,17 @@ from app.services.pricing import (
 router = APIRouter(prefix="/orders", tags=["orders"])
 
 STAGES = ["placed", "confirmed", "shipped", "out_for_delivery", "delivered"]
+
+# An order counts as "made" once it reaches at least confirmed (paid online or
+# COD). A customer with none of these is on their first order.
+FIRST_ORDER_DONE = ["confirmed", "shipped", "out_for_delivery", "delivered"]
+
+
+async def _is_first_order(db, user_id: str) -> bool:
+    if not user_id:
+        return False
+    n = await db.orders.count_documents({"user_id": user_id, "status": {"$in": FIRST_ORDER_DONE}})
+    return n == 0
 
 STATUS_MSG = {
     "confirmed": "Your order is confirmed and being packed 📦",
@@ -30,7 +42,7 @@ STATUS_MSG = {
 }
 
 
-async def _build_bill(db, items_in, address, coupon):
+async def _build_bill(db, items_in, address, coupon, user_id=None):
     settings = await get_settings(db)
     order_items = []
     lines = []  # (line_total, {cgst, sgst, igst})
@@ -67,11 +79,25 @@ async def _build_bill(db, items_in, address, coupon):
     coupon_doc = await get_coupon(db, coupon)
     discount = coupon_discount(coupon_doc, subtotal) if coupon_doc else 0.0
 
+    # First-order offer (isolated add-on, separate from coupons). Applies only
+    # when the admin enabled it AND this is the customer's first order. Off by
+    # default -> first_order_disc stays 0 and nothing below changes.
+    fo_cfg = settings.first_order.model_dump()
+    first_eligible = bool(fo_cfg.get("enabled")) and await _is_first_order(db, user_id)
+    first_order_disc = first_order_discount(fo_cfg, subtotal) if first_eligible else 0.0
+
+    # Total order-level discount drives delivery threshold, tax proration and
+    # the grand total. Never let combined discounts exceed the subtotal.
+    order_discount = discount + first_order_disc
+    if order_discount > subtotal:
+        order_discount = round(subtotal, 2)
+        first_order_disc = max(0.0, round(order_discount - discount, 2))
+
     # distance-based delivery
     distance = None
     if settings.shop.lat is not None and address.lat is not None:
         distance = haversine_km(settings.shop.lat, settings.shop.lng, address.lat, address.lng)
-    deliv = compute_delivery(settings, subtotal - discount, distance)
+    deliv = compute_delivery(settings, subtotal - order_discount, distance)
 
     # Same-state order -> CGST + SGST from the product; different state -> IGST.
     shop_state = (settings.shop.state or "").strip().lower()
@@ -81,7 +107,7 @@ async def _build_bill(db, items_in, address, coupon):
     total_cgst = total_sgst = total_igst = 0.0
     tax_items = []
     for oi, (line_total, comp) in zip(order_items, lines):
-        share = (line_total / subtotal * discount) if subtotal else 0.0
+        share = (line_total / subtotal * order_discount) if subtotal else 0.0
         taxable = max(0.0, line_total - share)
         if interstate:
             i_cgst = i_sgst = 0.0
@@ -113,11 +139,14 @@ async def _build_bill(db, items_in, address, coupon):
         "items": tax_items,  # per-product GST breakdown
     }
 
-    total = round((subtotal - discount) + deliv["fee"] + total_tax, 2)
+    total = round((subtotal - order_discount) + deliv["fee"] + total_tax, 2)
 
     bill = {
         "subtotal": round(subtotal, 2),
         "discount": discount,
+        "first_order_discount": round(first_order_disc, 2),
+        "first_order_applied": first_order_disc > 0,
+        "total_discount": round(order_discount, 2),
         "delivery": deliv["fee"],
         "delivery_free": deliv["free"],
         "distance_km": deliv["distance_km"],
@@ -136,7 +165,7 @@ async def _build_bill(db, items_in, address, coupon):
 async def quote(body: OrderCreate, user: dict = Depends(get_current_user)):
     """Preview the bill (delivery/tax/total) before placing the order."""
     db = get_db()
-    _, bill = await _build_bill(db, body.items, body.address, body.coupon_code)
+    _, bill = await _build_bill(db, body.items, body.address, body.coupon_code, user["id"])
     return bill
 
 
@@ -164,7 +193,7 @@ async def _decrement_stock(db, order_items):
 @router.post("")
 async def create_order(body: OrderCreate, user: dict = Depends(get_current_user)):
     db = get_db()
-    order_items, bill = await _build_bill(db, body.items, body.address, body.coupon_code)
+    order_items, bill = await _build_bill(db, body.items, body.address, body.coupon_code, user["id"])
     if not bill["deliverable"]:
         raise HTTPException(status_code=400, detail="Address is outside the delivery area")
     if bill["subtotal"] <= 0:
