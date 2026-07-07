@@ -16,6 +16,7 @@ import asyncio
 from datetime import datetime, timezone
 
 from app.db.mongodb import connect_to_mongo, get_db
+from app.services.pricing import price_span
 
 
 def now():
@@ -246,10 +247,19 @@ async def main():
         await db.products.update_one({"_id": p["_id"]}, {"$set": {"colors": new_colors}})
         variants += 1
 
+    # Per-product GST (Indian apparel slabs: cheapest variant < ₹1000 -> 5%, else 12%).
+    taxed = 0
+    async for p in db.products.find({}):
+        fp = price_span(p).get("final_price") or (p.get("price") or 0)
+        pct = 5 if fp < 1000 else 12
+        await db.products.update_one({"_id": p["_id"]}, {"$set": {"tax_pct": pct}})
+        taxed += 1
+
     total = await db.products.count_documents({})
     cats = await db.categories.count_documents({})
     print(f"Inserted {inserted} new products; reset dynamic fields on {reset.modified_count} demo products.")
     print(f"Fed per-colour/per-size price+discount+stock to {variants} colour-variant products.")
+    print(f"Set per-product GST on {taxed} products (5% under ₹1000, else 12%).")
     print(f"Catalogue now has {total} products, {cats} categories.")
     print("Done. rating/reviews/sold stay dynamic. Add images from the admin panel.")
 

@@ -32,7 +32,9 @@ STATUS_MSG = {
 
 async def _build_bill(db, items_in, address, coupon):
     settings = await get_settings(db)
+    default_pct = (settings.tax_rate or 0) * 100  # store-wide fallback GST %
     order_items = []
+    lines = []  # (line_total, tax_pct)
     subtotal = 0.0
     for it in items_in:
         prod = await db.products.find_one({"_id": to_object_id(it.product_id)})
@@ -40,7 +42,11 @@ async def _build_bill(db, items_in, address, coupon):
             raise HTTPException(status_code=400, detail="Product unavailable")
         # Price for the exact colour + size the customer chose (variant-aware).
         unit = resolve_price(prod, it.color, it.size)["final_price"]
-        subtotal += unit * it.qty
+        line_total = unit * it.qty
+        subtotal += line_total
+        pct = prod.get("tax_pct")
+        pct = float(pct) if pct is not None else default_pct  # per-product GST, else default
+        lines.append((line_total, pct))
         order_items.append(
             {
                 "product_id": it.product_id,
@@ -49,6 +55,7 @@ async def _build_bill(db, items_in, address, coupon):
                 "qty": it.qty,
                 "color": it.color,
                 "size": it.size,
+                "tax_pct": pct,
                 "image": (prod.get("images") or [None])[0],
             }
         )
@@ -62,9 +69,36 @@ async def _build_bill(db, items_in, address, coupon):
         distance = haversine_km(settings.shop.lat, settings.shop.lng, address.lat, address.lng)
     deliv = compute_delivery(settings, subtotal - discount, distance)
 
-    taxable = subtotal - discount
-    tax = round(taxable * settings.tax_rate, 2)
-    total = round(taxable + deliv["fee"] + tax, 2)
+    # Per-product GST: tax each line at its own rate, on its post-discount share.
+    total_tax = 0.0
+    rate_map: dict[float, dict] = {}
+    for line_total, pct in lines:
+        share = (line_total / subtotal * discount) if subtotal else 0.0
+        line_taxable = max(0.0, line_total - share)
+        line_tax = line_taxable * pct / 100
+        total_tax += line_tax
+        r = rate_map.setdefault(pct, {"rate": pct, "taxable": 0.0, "amount": 0.0})
+        r["taxable"] += line_taxable
+        r["amount"] += line_tax
+    total_tax = round(total_tax, 2)
+
+    # Same-state order -> CGST + SGST split; different state -> IGST.
+    shop_state = (settings.shop.state or "").strip().lower()
+    dest_state = (getattr(address, "state", "") or "").strip().lower()
+    interstate = bool(shop_state and dest_state and shop_state != dest_state)
+    gst = {
+        "total": total_tax,
+        "interstate": interstate,
+        "cgst": 0.0 if interstate else round(total_tax / 2, 2),
+        "sgst": 0.0 if interstate else round(total_tax / 2, 2),
+        "igst": total_tax if interstate else 0.0,
+        "rates": [
+            {"rate": v["rate"], "taxable": round(v["taxable"], 2), "amount": round(v["amount"], 2)}
+            for v in sorted(rate_map.values(), key=lambda x: x["rate"])
+        ],
+    }
+
+    total = round((subtotal - discount) + deliv["fee"] + total_tax, 2)
 
     bill = {
         "subtotal": round(subtotal, 2),
@@ -73,8 +107,8 @@ async def _build_bill(db, items_in, address, coupon):
         "delivery_free": deliv["free"],
         "distance_km": deliv["distance_km"],
         "deliverable": deliv["deliverable"],
-        "tax": tax,
-        "tax_rate": settings.tax_rate,
+        "tax": total_tax,
+        "gst": gst,
         "total": total,
         "currency": settings.currency,          # display symbol (₹)
         "currency_code": settings.currency_code,  # ISO code for Razorpay (INR)
