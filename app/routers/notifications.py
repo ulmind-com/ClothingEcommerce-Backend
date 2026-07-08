@@ -25,6 +25,13 @@ async def my_notifications(
     return [serialize(d) for d in docs]
 
 
+@router.get("/health")
+async def notif_health():
+    """Public: is FCM push configured on the server? (boolean only, no secrets)."""
+    from app.services import fcm_service
+    return {"fcm_ready": fcm_service._ensure_app()}
+
+
 @router.get("/unread-count")
 async def unread_count(user: dict = Depends(get_current_user)):
     db = get_db()
