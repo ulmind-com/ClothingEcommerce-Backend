@@ -352,6 +352,36 @@ async def all_orders(status: str | None = None):
     return [serialize(d) for d in docs]
 
 
+@router.get("/admin/refunds", dependencies=[Depends(require_admin)])
+async def admin_refunds():
+    """All cancelled orders with their refund details (newest cancellation first)."""
+    db = get_db()
+    docs = await db.orders.find({"status": "cancelled"}).sort("cancelled_at", -1).to_list(length=500)
+    return [serialize(d) for d in docs]
+
+
+@router.post("/{order_id}/refund", dependencies=[Depends(require_admin)])
+async def admin_refund(order_id: str):
+    """Manually initiate / retry a Razorpay refund for a paid online order."""
+    db = get_db()
+    order = await db.orders.find_one({"_id": to_object_id(order_id)})
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    if order.get("payment_method") != "online" or not order.get("razorpay_payment_id"):
+        raise HTTPException(status_code=400, detail="This order has no online payment to refund")
+    if order.get("refund_status") == "initiated":
+        raise HTTPException(status_code=400, detail="A refund is already initiated for this order")
+    try:
+        r = razorpay_service.refund(order["razorpay_payment_id"], int(round(order["amount"] * 100)))
+    except Exception as e:
+        await db.orders.update_one({"_id": order["_id"]}, {"$set": {"refund_status": "failed"}})
+        raise HTTPException(status_code=502, detail=f"Refund failed: {e}")
+    await db.orders.update_one(
+        {"_id": order["_id"]}, {"$set": {"refund_id": r.get("id"), "refund_status": "initiated"}}
+    )
+    return {"refund_status": "initiated", "refund_id": r.get("id")}
+
+
 @router.get("/{order_id}")
 async def get_order(order_id: str, user: dict = Depends(get_current_user)):
     db = get_db()
