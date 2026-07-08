@@ -15,6 +15,7 @@ class ChatMessage(BaseModel):
 
 class ChatIn(BaseModel):
     messages: list[ChatMessage] = []
+    order_id: str | None = None
 
 
 @router.get("/suggestions")
@@ -26,5 +27,5 @@ async def suggestions():
 @router.post("")
 async def chat(body: ChatIn, user: dict = Depends(get_current_user)):
     history = [m.model_dump() for m in body.messages]
-    text = await agent.reply(get_db(), user, history)
+    text = await agent.reply(get_db(), user, history, body.order_id)
     return {"reply": text}

@@ -43,7 +43,30 @@ def _call_groq(messages: list[dict]) -> str:
     return resp.json()["choices"][0]["message"]["content"].strip()
 
 
-async def _system_prompt(db, user: dict) -> str:
+async def _order_block(db, user: dict, order_id: str, currency: str) -> str:
+    from app.models.common import to_object_id
+    try:
+        o = await db.orders.find_one({"_id": to_object_id(order_id)})
+    except Exception:
+        o = None
+    if not o or o.get("user_id") != user["id"]:
+        return ""
+    oid = str(o["_id"])[-6:].upper()
+    items = ", ".join(
+        f"{it.get('title')} (x{it.get('qty')}{', ' + it['size'] if it.get('size') else ''}{', ' + it['color'] if it.get('color') else ''})"
+        for it in (o.get("items") or [])
+    )
+    lines = [
+        "IMPORTANT: The customer opened this chat from a specific order — focus your help on THIS order:",
+        f"- Order #{oid}: status={o.get('status')}, total={currency}{o.get('amount')}, payment={'online' if o.get('payment_method') == 'online' else 'COD'}",
+        f"- Items: {items}",
+    ]
+    if o.get("status") == "cancelled":
+        lines.append("- This order is cancelled" + (" and a refund was initiated." if o.get("refund_status") == "initiated" else "."))
+    return "\n".join(lines)
+
+
+async def _system_prompt(db, user: dict, order_id: str | None = None) -> str:
     s = await get_settings(db)
     lines = [
         "You are 'Cleo', the friendly customer-support assistant for the Clothing store, a fashion e-commerce app.",
@@ -69,13 +92,17 @@ async def _system_prompt(db, user: dict) -> str:
             )
     else:
         lines.append("This customer has no orders yet.")
+    if order_id:
+        block = await _order_block(db, user, order_id, s.currency)
+        if block:
+            lines.append(block)
     return "\n".join(lines)
 
 
-async def reply(db, user: dict, history: list[dict]) -> str:
+async def reply(db, user: dict, history: list[dict], order_id: str | None = None) -> str:
     if not _key():
         return "Sorry, chat support isn't available right now. Please try again later."
-    messages = [{"role": "system", "content": await _system_prompt(db, user)}]
+    messages = [{"role": "system", "content": await _system_prompt(db, user, order_id)}]
     for m in (history or [])[-10:]:
         role = "assistant" if m.get("role") == "assistant" else "user"
         content = str(m.get("content", "")).strip()[:1000]
