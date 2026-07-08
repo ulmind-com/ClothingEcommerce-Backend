@@ -35,7 +35,9 @@ def _ensure_app():
     return _ready
 
 
-async def send_to_tokens(tokens: list[str], title: str, body: str, data: dict | None = None) -> list[str]:
+async def send_to_tokens(
+    tokens: list[str], title: str, body: str, data: dict | None = None, image: str | None = None
+) -> list[str]:
     """Send a push to the given device tokens. No-op if unconfigured.
 
     Returns the tokens that are permanently invalid (unregistered / malformed)
@@ -50,7 +52,7 @@ async def send_to_tokens(tokens: list[str], title: str, body: str, data: dict | 
         for i in range(0, len(tokens), 500):
             chunk = tokens[i : i + 500]
             message = messaging.MulticastMessage(
-                notification=messaging.Notification(title=title, body=body),
+                notification=messaging.Notification(title=title, body=body, image=image),
                 data={k: str(v) for k, v in (data or {}).items()},
                 tokens=chunk,
             )

@@ -74,6 +74,19 @@ app.include_router(home_sections.router)
 app.include_router(notifications_router.router)
 
 
+import os
+
+from fastapi.responses import FileResponse
+
+_BRAND_IMAGE = os.path.join(os.path.dirname(__file__), "static", "notification-image.png")
+
+
+@app.get("/static/notification-image.png", tags=["static"])
+async def notification_image():
+    """Public brand image shown alongside push notifications."""
+    return FileResponse(_BRAND_IMAGE, media_type="image/png")
+
+
 @app.get("/", tags=["health"])
 async def health():
     return {"status": "ok", "app": settings.APP_NAME, "env": settings.ENV}

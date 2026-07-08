@@ -7,8 +7,12 @@ still works, so the whole system is testable before Firebase is wired.
 """
 from datetime import datetime, timedelta, timezone
 
+from app.core.config import settings
 from app.models.common import to_object_id
 from app.services import fcm_service
+
+# Brand image shown alongside every push (served publicly by the backend).
+_PUSH_IMAGE = f"{settings.PUBLIC_BASE_URL.rstrip('/')}/static/notification-image.png"
 
 # Statuses that mean a customer has actually ordered (used to target the
 # first-order audience — mirrors the coupon gating).
@@ -52,7 +56,7 @@ async def notify_users(db, user_ids, title, body, data=None, kind="general", sto
             owner[t] = u["_id"]
             tokens.append(t)
 
-    dead = await fcm_service.send_to_tokens(tokens, title, body, data)
+    dead = await fcm_service.send_to_tokens(tokens, title, body, data, image=_PUSH_IMAGE)
     for t in dead:
         await db.users.update_one({"_id": owner[t]}, {"$pull": {"fcm_tokens": t}})
 

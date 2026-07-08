@@ -29,6 +29,10 @@ class Settings(BaseSettings):
     # notification sweeper (belt-and-suspenders alongside the in-process loop).
     CRON_SECRET: str = ""
 
+    # Public base URL of this backend — used to build absolute URLs for push
+    # notification images (FCM needs a reachable URL, not a local asset).
+    PUBLIC_BASE_URL: str = "https://clothingecommerce-backend.onrender.com"
+
     # AI recommendations (Groq — OpenAI-compatible). Empty key => heuristic only.
     GROQ_API_KEY: str = ""
     GROQ_MODEL: str = "llama-3.3-70b-versatile"
