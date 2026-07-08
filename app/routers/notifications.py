@@ -10,13 +10,17 @@ router = APIRouter(prefix="/notifications", tags=["notifications"])
 
 
 @router.get("")
-async def my_notifications(limit: int = 50, user: dict = Depends(get_current_user)):
-    """In-app inbox: this user's notifications, newest first."""
+async def my_notifications(
+    limit: int = 10, skip: int = 0, user: dict = Depends(get_current_user)
+):
+    """In-app inbox: this user's notifications, newest first (paginated)."""
     db = get_db()
     docs = (
         await db.notifications.find({"user_id": user["id"]})
         .sort("created_at", -1)
-        .to_list(length=min(max(limit, 1), 100))
+        .skip(max(skip, 0))
+        .limit(min(max(limit, 1), 50))
+        .to_list(length=min(max(limit, 1), 50))
     )
     return [serialize(d) for d in docs]
 
@@ -43,6 +47,20 @@ async def read_one(notif_id: str, user: dict = Depends(get_current_user)):
     await db.notifications.update_one(
         {"_id": to_object_id(notif_id), "user_id": user["id"]}, {"$set": {"read": True}}
     )
+    return {"ok": True}
+
+
+@router.delete("")
+async def clear_all(user: dict = Depends(get_current_user)):
+    db = get_db()
+    await db.notifications.delete_many({"user_id": user["id"]})
+    return {"ok": True}
+
+
+@router.delete("/{notif_id}")
+async def delete_one(notif_id: str, user: dict = Depends(get_current_user)):
+    db = get_db()
+    await db.notifications.delete_one({"_id": to_object_id(notif_id), "user_id": user["id"]})
     return {"ok": True}
 
 
