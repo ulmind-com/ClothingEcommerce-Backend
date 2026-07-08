@@ -43,6 +43,10 @@ class Settings(BaseSettings):
     GROQ_TIMEOUT: float = 8.0
     RECS_USE_LLM: bool = True
 
+    # Separate Groq key for the customer-support chat agent (falls back to the
+    # recommendations key if unset).
+    GROQ_AGENT_API_KEY: str = ""
+
     @property
     def cors_list(self) -> list[str]:
         return [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]

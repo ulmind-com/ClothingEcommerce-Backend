@@ -10,6 +10,7 @@ from app.routers import (
     auth,
     banners,
     categories,
+    chat,
     coupons,
     home_sections,
     notifications as notifications_router,
@@ -72,6 +73,7 @@ app.include_router(search.router)
 app.include_router(recommendations.router)
 app.include_router(home_sections.router)
 app.include_router(notifications_router.router)
+app.include_router(chat.router)
 
 
 import os
