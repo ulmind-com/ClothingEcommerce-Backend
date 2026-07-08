@@ -25,6 +25,10 @@ class Settings(BaseSettings):
 
     FIREBASE_CREDENTIALS: str = ""
 
+    # Google OAuth: the Web client ID (aud) the mobile ID token is verified
+    # against. Same value the app passes as webClientId to Google Sign-In.
+    GOOGLE_CLIENT_ID: str = ""
+
     # Optional shared secret so an external cron can trigger the scheduled-
     # notification sweeper (belt-and-suspenders alongside the in-process loop).
     CRON_SECRET: str = ""

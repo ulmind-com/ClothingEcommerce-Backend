@@ -1,7 +1,8 @@
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException
 
+from app.core.config import settings as app_settings
 from app.core.security import create_access_token, hash_password, verify_password
 from app.db.mongodb import get_db
 from app.deps import get_current_user
@@ -65,6 +66,65 @@ async def login(body: UserLogin):
     doc = await db.users.find_one({"email": body.email.lower()})
     if not doc or not verify_password(body.password, doc.get("password", "")):
         raise HTTPException(status_code=401, detail="Invalid email or password")
+    user = serialize(doc)
+    token = create_access_token(user["id"], user.get("role", "user"))
+    return AuthResponse(access_token=token, user=_public(user))
+
+
+@router.post("/google", response_model=AuthResponse)
+async def google_auth(id_token: str = Body(..., embed=True)):
+    """Sign in with a Google ID token from the app; upsert the user, issue JWT."""
+    if not app_settings.GOOGLE_CLIENT_ID:
+        raise HTTPException(status_code=500, detail="Google sign-in is not configured")
+
+    from google.auth.transport import requests as g_requests
+    from google.oauth2 import id_token as g_id_token
+
+    try:
+        info = g_id_token.verify_oauth2_token(
+            id_token, g_requests.Request(), app_settings.GOOGLE_CLIENT_ID
+        )
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid Google token")
+
+    email = (info.get("email") or "").lower()
+    if not email:
+        raise HTTPException(status_code=400, detail="Google account has no email")
+
+    db = get_db()
+    doc = await db.users.find_one({"email": email})
+    if not doc:
+        doc = {
+            "name": info.get("name") or email.split("@")[0],
+            "email": email,
+            "phone": None,
+            "password": None,
+            "role": "user",
+            "provider": "google",
+            "google_sub": info.get("sub"),
+            "avatar": info.get("picture"),
+            "addresses": [],
+            "fcm_tokens": [],
+            "created_at": datetime.now(timezone.utc),
+        }
+        res = await db.users.insert_one(doc)
+        doc["_id"] = res.inserted_id
+        await notifications.schedule(
+            db, str(doc["_id"]), "first_order_welcome", notifications.WELCOME_DELAY_MIN
+        )
+    else:
+        # Link Google to an existing email-based account; backfill avatar.
+        patch = {}
+        if not doc.get("provider"):
+            patch["provider"] = "google"
+        if not doc.get("google_sub"):
+            patch["google_sub"] = info.get("sub")
+        if not doc.get("avatar") and info.get("picture"):
+            patch["avatar"] = info.get("picture")
+        if patch:
+            await db.users.update_one({"_id": doc["_id"]}, {"$set": patch})
+            doc.update(patch)
+
     user = serialize(doc)
     token = create_access_token(user["id"], user.get("role", "user"))
     return AuthResponse(access_token=token, user=_public(user))
