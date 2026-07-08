@@ -56,11 +56,7 @@ async def create_return(body: ReturnCreate, user: dict = Depends(get_current_use
         raise HTTPException(status_code=400, detail="Only delivered orders can be returned")
 
     settings = await get_settings(db)
-    window = settings.return_window_days or 0
-    if window <= 0:
-        raise HTTPException(status_code=400, detail="Returns aren't available")
-    if datetime.now(timezone.utc) > _deadline(order, window):
-        raise HTTPException(status_code=400, detail=f"The {int(window)}-day return window has passed")
+    global_days = settings.return_window_days or 0
 
     if body.type not in ("refund", "exchange"):
         raise HTTPException(status_code=400, detail="Invalid return type")
@@ -84,6 +80,21 @@ async def create_return(body: ReturnCreate, user: dict = Depends(get_current_use
             raise HTTPException(status_code=400, detail="Item is not part of this order")
         if req.qty > int(match.get("qty", 0)):
             raise HTTPException(status_code=400, detail="Return quantity exceeds the ordered quantity")
+
+        # Per-product return policy governs eligibility.
+        try:
+            prod = await db.products.find_one({"_id": to_object_id(req.product_id)})
+        except Exception:
+            prod = None
+        title = match.get("title")
+        if prod is not None and not prod.get("returnable", True):
+            raise HTTPException(status_code=400, detail=f"'{title}' is not eligible for return")
+        item_days = (prod.get("return_days") if prod else 0) or global_days
+        if item_days <= 0:
+            raise HTTPException(status_code=400, detail=f"Returns aren't available for '{title}'")
+        if datetime.now(timezone.utc) > _deadline(order, item_days):
+            raise HTTPException(status_code=400, detail=f"The return window for '{title}' has passed")
+
         line = float(match.get("price", 0)) * req.qty
         amount += line
         resolved.append({

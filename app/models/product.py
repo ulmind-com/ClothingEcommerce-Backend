@@ -48,6 +48,11 @@ class ProductCreate(BaseModel):
     review_count: int = 0
     sold_count: int = 0
 
+    # Per-product return/refund policy. returnable=False => no returns for this
+    # product. return_days=0 => fall back to the store-wide return window.
+    returnable: bool = True
+    return_days: int = 0
+
     is_active: bool = True
 
 
@@ -71,4 +76,6 @@ class ProductUpdate(BaseModel):
     rating: float | None = None
     review_count: int | None = None
     sold_count: int | None = None
+    returnable: bool | None = None
+    return_days: int | None = None
     is_active: bool | None = None
