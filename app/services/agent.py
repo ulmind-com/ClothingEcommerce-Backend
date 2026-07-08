@@ -12,14 +12,14 @@ from app.services.pricing import get_settings
 
 _GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 
-# Quick-reply questions surfaced in the app.
+# Quick-reply questions surfaced in the app — kept short so they fit one line.
 SUGGESTIONS = [
-    "Where is my order?",
-    "How do I cancel an order?",
-    "What payment methods do you accept?",
-    "How is delivery charged?",
-    "Do you have any offers?",
-    "How do I return an item?",
+    "Where's my order?",
+    "Cancel an order",
+    "Payment methods",
+    "Delivery charges",
+    "Offers & coupons",
+    "Return an item",
 ]
 
 
