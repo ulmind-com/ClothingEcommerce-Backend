@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Body, Depends, HTTPException
@@ -6,6 +7,7 @@ from pydantic import BaseModel, Field
 from app.db.mongodb import get_db
 from app.deps import get_current_user, get_optional_user, require_admin
 from app.models.common import serialize, to_object_id
+from app.services import notifications
 from app.services.pricing import coupon_discount
 
 router = APIRouter(prefix="/coupons", tags=["coupons"])
@@ -107,6 +109,21 @@ async def create_coupon(body: CouponIn):
     doc["created_at"] = datetime.now(timezone.utc)
     res = await db.coupons.insert_one(doc)
     doc["_id"] = res.inserted_id
+
+    # Announce it (first-order-only -> only first-order customers). Fire-and-
+    # forget so the admin response isn't held up by a large broadcast.
+    first_only = bool(doc.get("first_order_only"))
+    disc = doc.get("description") or (
+        f"₹{int(doc['value'])} off" if doc["type"] == "flat" else f"{int(doc['value'])}% off"
+    )
+    asyncio.create_task(notifications.notify_all(
+        db,
+        "A gift for your first order 🎁" if first_only else "New offer unlocked 🎉",
+        f"{disc} — use code {code}",
+        {"type": "coupon", "code": code},
+        kind="coupon",
+        only_first_order=first_only,
+    ))
     return serialize(doc)
 
 

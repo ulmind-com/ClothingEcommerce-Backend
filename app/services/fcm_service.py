@@ -35,21 +35,35 @@ def _ensure_app():
     return _ready
 
 
-async def send_to_tokens(tokens: list[str], title: str, body: str, data: dict | None = None):
-    """Send a push notification to the given device tokens. No-op if unconfigured."""
+async def send_to_tokens(tokens: list[str], title: str, body: str, data: dict | None = None) -> list[str]:
+    """Send a push to the given device tokens. No-op if unconfigured.
+
+    Returns the tokens that are permanently invalid (unregistered / malformed)
+    so the caller can prune them. FCM caps a multicast at 500 tokens -> chunk.
+    """
     if not tokens or not _ensure_app():
-        return
+        return []
+    dead: list[str] = []
     try:
         from firebase_admin import messaging
 
-        message = messaging.MulticastMessage(
-            notification=messaging.Notification(title=title, body=body),
-            data={k: str(v) for k, v in (data or {}).items()},
-            tokens=tokens,
-        )
-        messaging.send_each_for_multicast(message)
+        for i in range(0, len(tokens), 500):
+            chunk = tokens[i : i + 500]
+            message = messaging.MulticastMessage(
+                notification=messaging.Notification(title=title, body=body),
+                data={k: str(v) for k, v in (data or {}).items()},
+                tokens=chunk,
+            )
+            resp = messaging.send_each_for_multicast(message)
+            for tok, r in zip(chunk, resp.responses):
+                if r.success:
+                    continue
+                name = type(getattr(r, "exception", None)).__name__
+                if name in ("UnregisteredError", "InvalidArgumentError", "SenderIdMismatchError"):
+                    dead.append(tok)
     except Exception as e:  # pragma: no cover
         print(f"[fcm] send failed: {e}")
+    return dead
 
 
 async def notify_user(db, user_id: str, title: str, body: str, data: dict | None = None):

@@ -25,6 +25,10 @@ class Settings(BaseSettings):
 
     FIREBASE_CREDENTIALS: str = ""
 
+    # Optional shared secret so an external cron can trigger the scheduled-
+    # notification sweeper (belt-and-suspenders alongside the in-process loop).
+    CRON_SECRET: str = ""
+
     # AI recommendations (Groq — OpenAI-compatible). Empty key => heuristic only.
     GROQ_API_KEY: str = ""
     GROQ_MODEL: str = "llama-3.3-70b-versatile"

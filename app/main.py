@@ -1,16 +1,18 @@
+import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
-from app.db.mongodb import close_mongo_connection, connect_to_mongo
+from app.db.mongodb import close_mongo_connection, connect_to_mongo, get_db
 from app.routers import (
     auth,
     banners,
     categories,
     coupons,
     home_sections,
+    notifications as notifications_router,
     orders,
     products,
     recommendations,
@@ -21,12 +23,27 @@ from app.routers import (
     users,
     wishlist,
 )
+from app.services import notifications as notif_service
+
+SWEEP_SECONDS = 60
+
+
+async def _notification_sweeper():
+    """Send scheduled notifications whose time has come, once a minute."""
+    while True:
+        await asyncio.sleep(SWEEP_SECONDS)
+        try:
+            await notif_service.run_due(get_db())
+        except Exception as e:  # pragma: no cover
+            print(f"[notif] sweeper error: {e}")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await connect_to_mongo()
+    sweeper = asyncio.create_task(_notification_sweeper())
     yield
+    sweeper.cancel()
     await close_mongo_connection()
 
 
@@ -54,6 +71,7 @@ app.include_router(upload.router)
 app.include_router(search.router)
 app.include_router(recommendations.router)
 app.include_router(home_sections.router)
+app.include_router(notifications_router.router)
 
 
 @app.get("/", tags=["health"])

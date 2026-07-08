@@ -8,7 +8,7 @@ from app.deps import get_current_user, require_admin
 from app.models.common import serialize, to_object_id
 from app.models.order import OrderCreate, OrderVerify
 from app.routers.coupons import get_coupon
-from app.services import fcm_service, razorpay_service
+from app.services import notifications, razorpay_service
 from app.services.pricing import (
     compute_delivery,
     coupon_discount,
@@ -191,8 +191,9 @@ async def create_order(body: OrderCreate, user: dict = Depends(get_current_user)
 
     if is_cod:
         await _decrement_stock(db, order_items)
-        await fcm_service.notify_user(db, user["id"], "Order placed 🎉",
-                                      "Your COD order is confirmed.", {"order_id": our_id})
+        await notifications.notify_users(db, [user["id"]], "Order placed 🎉",
+                                         "Your COD order is confirmed.",
+                                         {"type": "order", "order_id": our_id}, kind="order")
         return {"order_id": our_id, "payment_method": "cod", "status": "confirmed", "bill": bill}
 
     try:
@@ -239,8 +240,9 @@ async def verify_order(body: OrderVerify, user: dict = Depends(get_current_user)
                   "paid_at": datetime.now(timezone.utc)}},
     )
     await _decrement_stock(db, order["items"])
-    await fcm_service.notify_user(db, user["id"], "Payment successful 🎉",
-                                  "Your order is confirmed.", {"order_id": body.order_id})
+    await notifications.notify_users(db, [user["id"]], "Payment successful 🎉",
+                                     "Your order is confirmed.",
+                                     {"type": "order", "order_id": body.order_id}, kind="order")
     return {"status": "confirmed", "order_id": body.order_id}
 
 
@@ -287,6 +289,7 @@ async def update_status(order_id: str, status: str = Body(..., embed=True)):
             )
         await db.orders.update_one({"_id": res["_id"]}, {"$set": {"sold_counted": True}})
 
-    await fcm_service.notify_user(db, res["user_id"], "Order update",
-                                  STATUS_MSG.get(status, f"Status: {status}"), {"order_id": order_id})
+    await notifications.notify_users(db, [res["user_id"]], "Order update",
+                                     STATUS_MSG.get(status, f"Status: {status}"),
+                                     {"type": "order", "order_id": order_id}, kind="order")
     return serialize(res)

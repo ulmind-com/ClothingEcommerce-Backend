@@ -13,6 +13,7 @@ from app.models.user import (
     UserPublic,
     UserRegister,
 )
+from app.services import notifications
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -47,6 +48,13 @@ async def register(body: UserRegister):
     res = await db.users.insert_one(doc)
     doc["_id"] = res.inserted_id
     user = serialize(doc)
+
+    # First-order welcome nudge: a little after signup, if a first-order coupon
+    # is live then, remind them to use it (checked at send time).
+    await notifications.schedule(
+        db, user["id"], "first_order_welcome", notifications.WELCOME_DELAY_MIN
+    )
+
     token = create_access_token(user["id"], user["role"])
     return AuthResponse(access_token=token, user=_public(user))
 
