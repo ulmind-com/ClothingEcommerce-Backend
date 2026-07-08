@@ -23,6 +23,13 @@ def create_order(amount_paise: int, receipt: str, currency: str = "INR") -> dict
     )
 
 
+def refund(payment_id: str, amount_paise: int | None = None) -> dict:
+    """Refund a captured payment (full by default). Raises on failure."""
+    client = _get_client()
+    data = {"amount": amount_paise} if amount_paise else {}
+    return client.payment.refund(payment_id, data)
+
+
 def verify_signature(order_id: str, payment_id: str, signature: str) -> bool:
     client = _get_client()
     try:

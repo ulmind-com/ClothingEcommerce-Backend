@@ -28,6 +28,9 @@ class Settings(BaseModel):
     currency: str = "₹"
     currency_code: str = "INR"
     tax_rate: float = 0.05             # 5%
+    # How long after placing an order a customer may cancel it (in hours).
+    # 0 disables self-cancellation entirely.
+    cancel_window_hours: float = 24
     shop: ShopConfig = ShopConfig()
     delivery: DeliveryConfig = DeliveryConfig()
 
@@ -36,5 +39,6 @@ class SettingsUpdate(BaseModel):
     currency: str | None = None
     currency_code: str | None = None
     tax_rate: float | None = None
+    cancel_window_hours: float | None = None
     shop: ShopConfig | None = None
     delivery: DeliveryConfig | None = None

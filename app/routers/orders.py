@@ -163,6 +163,28 @@ async def _decrement_stock(db, order_items):
             await db.products.update_one({"_id": prod["_id"]}, {"$inc": {"stock": -it["qty"]}})
 
 
+async def _restore_stock(db, order_items):
+    """Put stock back (inverse of _decrement_stock) — used on cancellation."""
+    for it in order_items:
+        prod = await db.products.find_one({"_id": to_object_id(it["product_id"])})
+        if not prod:
+            continue
+        colors = prod.get("colors") or []
+        if colors and it.get("color"):
+            for c in colors:
+                if c.get("name") == it["color"]:
+                    sizes = c.get("sizes") or []
+                    if sizes and it.get("size"):
+                        for ss in sizes:
+                            if ss.get("size") == it["size"]:
+                                ss["stock"] = int(ss.get("stock", 0)) + it["qty"]
+                    else:
+                        c["stock"] = int(c.get("stock", 0)) + it["qty"]
+            await db.products.update_one({"_id": prod["_id"]}, {"$set": {"colors": colors}})
+        else:
+            await db.products.update_one({"_id": prod["_id"]}, {"$inc": {"stock": it["qty"]}})
+
+
 @router.post("")
 async def create_order(body: OrderCreate, user: dict = Depends(get_current_user)):
     db = get_db()
@@ -244,6 +266,75 @@ async def verify_order(body: OrderVerify, user: dict = Depends(get_current_user)
                                      "Your order is confirmed.",
                                      {"type": "order", "order_id": body.order_id}, kind="order")
     return {"status": "confirmed", "order_id": body.order_id}
+
+
+# Orders can be self-cancelled only before they're handed to shipping.
+CANCELLABLE = ["placed", "confirmed"]
+
+
+@router.post("/{order_id}/cancel")
+async def cancel_order(order_id: str, user: dict = Depends(get_current_user)):
+    """Customer cancels their own order — allowed only within the admin's
+    cancellation window and before the order ships. Restores stock and, for a
+    paid online order, initiates a Razorpay refund."""
+    db = get_db()
+    order = await db.orders.find_one({"_id": to_object_id(order_id)})
+    if not order or order["user_id"] != user["id"]:
+        raise HTTPException(status_code=404, detail="Order not found")
+    if order["status"] not in CANCELLABLE:
+        raise HTTPException(status_code=400, detail="This order can no longer be cancelled")
+
+    settings = await get_settings(db)
+    window = settings.cancel_window_hours or 0
+    if window <= 0:
+        raise HTTPException(status_code=400, detail="Order cancellation isn't available")
+
+    created = order.get("created_at")
+    if created and created.tzinfo is None:
+        created = created.replace(tzinfo=timezone.utc)
+    now = datetime.now(timezone.utc)
+    elapsed_h = (now - created).total_seconds() / 3600 if created else 0
+    if elapsed_h > window:
+        raise HTTPException(
+            status_code=400,
+            detail=f"The cancellation window ({_fmt_window(window)}) has passed",
+        )
+
+    update: dict = {"status": "cancelled", "cancelled_at": now}
+
+    # Refund a captured online payment (best-effort — cancel regardless).
+    refunded = False
+    if order.get("payment_method") == "online" and order.get("razorpay_payment_id"):
+        try:
+            r = razorpay_service.refund(order["razorpay_payment_id"], int(round(order["amount"] * 100)))
+            update["refund_id"] = r.get("id")
+            update["refund_status"] = "initiated"
+            refunded = True
+        except Exception as e:  # pragma: no cover
+            print(f"[orders] refund failed: {e}")
+            update["refund_status"] = "failed"
+
+    await db.orders.update_one({"_id": order["_id"]}, {"$set": update})
+
+    # Stock was only decremented once the order was confirmed (COD or paid).
+    if order["status"] == "confirmed":
+        await _restore_stock(db, order["items"])
+
+    msg = "Your order has been cancelled."
+    if refunded:
+        msg += " Your refund has been initiated."
+    await notifications.notify_users(
+        db, [user["id"]], "Order cancelled", msg, {"type": "order", "order_id": order_id}, kind="order"
+    )
+    return {"status": "cancelled", "refund": refunded}
+
+
+def _fmt_window(hours: float) -> str:
+    if hours >= 24 and hours % 24 == 0:
+        d = int(hours // 24)
+        return f"{d} day" + ("s" if d != 1 else "")
+    h = int(hours) if float(hours).is_integer() else hours
+    return f"{h} hour" + ("s" if h != 1 else "")
 
 
 @router.get("")
