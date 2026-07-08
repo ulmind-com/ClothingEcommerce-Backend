@@ -19,9 +19,9 @@ class ChatIn(BaseModel):
 
 
 @router.get("/suggestions")
-async def suggestions():
-    """Quick questions the app offers as taps."""
-    return {"questions": agent.SUGGESTIONS}
+async def suggestions(order_id: str | None = None, user: dict = Depends(get_current_user)):
+    """Quick questions/actions — order-aware when an order_id is given."""
+    return {"questions": await agent.suggestions_for(get_db(), user, order_id)}
 
 
 @router.post("")

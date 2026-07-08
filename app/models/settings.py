@@ -19,6 +19,7 @@ class ShopConfig(BaseModel):
     name: str = "Clothing Store"
     address: str = ""
     phone: str = ""
+    email: str = ""          # support email surfaced to customers (chat, help)
     state: str = ""          # seller's state — same-state order = CGST+SGST, else IGST
     lat: float | None = None
     lng: float | None = None

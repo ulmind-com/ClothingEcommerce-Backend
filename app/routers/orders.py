@@ -340,7 +340,12 @@ def _fmt_window(hours: float) -> str:
 @router.get("")
 async def my_orders(user: dict = Depends(get_current_user)):
     db = get_db()
-    docs = await db.orders.find({"user_id": user["id"]}).sort("created_at", -1).to_list(length=100)
+    # Hide abandoned online orders that were never paid (status stays "placed"
+    # with no payment id) — they aren't real orders to the customer.
+    docs = await db.orders.find({
+        "user_id": user["id"],
+        "$or": [{"status": {"$ne": "placed"}}, {"razorpay_payment_id": {"$ne": None}}],
+    }).sort("created_at", -1).to_list(length=100)
     return [serialize(d) for d in docs]
 
 
