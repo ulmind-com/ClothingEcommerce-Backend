@@ -17,6 +17,7 @@ from app.routers import (
     orders,
     products,
     recommendations,
+    returns,
     reviews,
     search,
     settings as settings_router,
@@ -74,6 +75,7 @@ app.include_router(recommendations.router)
 app.include_router(home_sections.router)
 app.include_router(notifications_router.router)
 app.include_router(chat.router)
+app.include_router(returns.router)
 
 
 import os

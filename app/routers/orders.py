@@ -402,13 +402,17 @@ async def update_status(order_id: str, status: str = Body(..., embed=True)):
     if not res:
         raise HTTPException(status_code=404, detail="Order not found")
 
-    # Count units sold once, when the order is delivered.
+    # Count units sold once, and stamp the delivery time (drives the return
+    # window), when the order is delivered.
     if status == "delivered" and not res.get("sold_counted"):
         for it in res.get("items", []):
             await db.products.update_one(
                 {"_id": to_object_id(it["product_id"])}, {"$inc": {"sold_count": it["qty"]}}
             )
-        await db.orders.update_one({"_id": res["_id"]}, {"$set": {"sold_counted": True}})
+        await db.orders.update_one(
+            {"_id": res["_id"]},
+            {"$set": {"sold_counted": True, "delivered_at": datetime.now(timezone.utc)}},
+        )
 
     await notifications.notify_users(db, [res["user_id"]], "Order update",
                                      STATUS_MSG.get(status, f"Status: {status}"),

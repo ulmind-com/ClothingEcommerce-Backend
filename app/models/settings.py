@@ -31,6 +31,9 @@ class Settings(BaseModel):
     # How long after placing an order a customer may cancel it (in hours).
     # 0 disables self-cancellation entirely.
     cancel_window_hours: float = 24
+    # How many days after delivery a customer may request a return/exchange.
+    # 0 disables returns entirely.
+    return_window_days: float = 7
     shop: ShopConfig = ShopConfig()
     delivery: DeliveryConfig = DeliveryConfig()
 
@@ -40,5 +43,6 @@ class SettingsUpdate(BaseModel):
     currency_code: str | None = None
     tax_rate: float | None = None
     cancel_window_hours: float | None = None
+    return_window_days: float | None = None
     shop: ShopConfig | None = None
     delivery: DeliveryConfig | None = None

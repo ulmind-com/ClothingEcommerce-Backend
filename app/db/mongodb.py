@@ -37,3 +37,4 @@ async def _ensure_indexes() -> None:
     await db.orders.create_index("user_id")
     await db.notifications.create_index([("user_id", 1), ("created_at", -1)])
     await db.scheduled_notifications.create_index([("status", 1), ("due_at", 1)])
+    await db.returns.create_index([("user_id", 1), ("created_at", -1)])
