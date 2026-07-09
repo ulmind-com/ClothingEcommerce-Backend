@@ -44,3 +44,18 @@ def decode_access_token(token: str) -> dict:
     return jwt.decode(
         token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM]
     )
+
+
+# --- Short-lived signup token: proof that an email passed OTP verification ---
+def create_signup_token(email: str, minutes: int = 15) -> str:
+    expire = datetime.now(timezone.utc) + timedelta(minutes=minutes)
+    payload = {"sub": email, "purpose": "signup", "exp": expire}
+    return jwt.encode(payload, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
+
+
+def decode_signup_token(token: str) -> str:
+    """Return the verified email from a signup token, or raise if invalid."""
+    payload = jwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM])
+    if payload.get("purpose") != "signup":
+        raise ValueError("Not a signup token")
+    return payload["sub"]

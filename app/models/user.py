@@ -8,6 +8,23 @@ class UserRegister(BaseModel):
     phone: str | None = None
 
 
+class OtpRequest(BaseModel):
+    email: EmailStr
+
+
+class OtpVerify(BaseModel):
+    email: EmailStr
+    code: str = Field(min_length=4, max_length=8)
+
+
+class SignupComplete(BaseModel):
+    """Final step: the signup token (proof of a verified email) plus profile."""
+    signup_token: str
+    name: str = Field(min_length=1, max_length=80)
+    phone: str = Field(min_length=6, max_length=20)
+    password: str = Field(min_length=6, max_length=128)
+
+
 class UserLogin(BaseModel):
     email: EmailStr
     password: str

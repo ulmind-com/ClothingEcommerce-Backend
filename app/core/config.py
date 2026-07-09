@@ -29,6 +29,15 @@ class Settings(BaseSettings):
     # against. Same value the app passes as webClientId to Google Sign-In.
     GOOGLE_CLIENT_ID: str = ""
 
+    # Transactional email (Resend) — used for the signup OTP. Client swaps
+    # these later; leaving RESEND_API_KEY empty just logs the code (dev).
+    RESEND_API_KEY: str = ""
+    MAIL_ADDRESS: str = "noreply@samiransamanta.in"
+    MAIL_FROM_NAME: str = "Clothing"
+    OTP_TTL_MINUTES: int = 10           # how long a code stays valid
+    OTP_RESEND_COOLDOWN_SECONDS: int = 60  # min gap between resends
+    OTP_MAX_ATTEMPTS: int = 5           # wrong tries before a code is burned
+
     # Optional shared secret so an external cron can trigger the scheduled-
     # notification sweeper (belt-and-suspenders alongside the in-process loop).
     CRON_SECRET: str = ""
