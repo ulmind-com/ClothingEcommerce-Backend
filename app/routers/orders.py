@@ -10,6 +10,7 @@ from app.models.order import OrderCreate, OrderVerify
 from app.routers.coupons import get_coupon
 from app.services import notifications, razorpay_service
 from app.services.pricing import (
+    cod_availability,
     compute_delivery,
     coupon_discount,
     get_settings,
@@ -142,6 +143,15 @@ async def quote(body: OrderCreate, user: dict = Depends(get_current_user)):
     return bill
 
 
+@router.get("/cod-availability")
+async def cod_availability_for_me(user: dict = Depends(get_current_user)):
+    """Whether the signed-in customer can choose Cash on Delivery right now
+    (respects the global switch, the scheduled pause, and a per-user block)."""
+    db = get_db()
+    settings = await get_settings(db)
+    return cod_availability(settings, user)
+
+
 async def _decrement_stock(db, order_items):
     for it in order_items:
         prod = await db.products.find_one({"_id": to_object_id(it["product_id"])})
@@ -195,6 +205,11 @@ async def create_order(body: OrderCreate, user: dict = Depends(get_current_user)
         raise HTTPException(status_code=400, detail="Empty order")
 
     is_cod = body.payment_method == "cod"
+    if is_cod:
+        settings = await get_settings(db)
+        avail = cod_availability(settings, user)
+        if not avail["available"]:
+            raise HTTPException(status_code=400, detail=avail["reason"])
     doc = {
         "user_id": user["id"],
         "items": order_items,

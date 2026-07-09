@@ -1,4 +1,5 @@
 import math
+from datetime import datetime
 
 from app.models.settings import Settings
 
@@ -11,6 +12,38 @@ async def get_settings(db) -> Settings:
         return Settings()
     doc.pop("_id", None)
     return Settings(**doc)
+
+
+def _parse_dt(value: str | None):
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def cod_availability(settings: Settings, user: dict | None = None) -> dict:
+    """Whether Cash on Delivery can be used right now for this user.
+
+    Combines the three admin controls: the global switch, an optional
+    scheduled pause window, and a per-user block. Returns
+    {available: bool, reason: str} — `reason` is customer-facing.
+    """
+    cod = settings.cod
+    if not cod.enabled:
+        return {"available": False, "reason": "Cash on Delivery is currently unavailable."}
+
+    now = datetime.now()
+    frm, until = _parse_dt(cod.disabled_from), _parse_dt(cod.disabled_until)
+    paused = (frm or until) and (frm is None or now >= frm) and (until is None or now <= until)
+    if paused:
+        return {"available": False, "reason": "Cash on Delivery is temporarily paused. Please pay online."}
+
+    if user and user.get("cod_blocked"):
+        return {"available": False, "reason": "Cash on Delivery isn't available for your account."}
+
+    return {"available": True, "reason": ""}
 
 
 async def save_settings(db, settings: Settings) -> Settings:

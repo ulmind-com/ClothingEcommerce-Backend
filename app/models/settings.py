@@ -15,6 +15,16 @@ class DeliveryConfig(BaseModel):
     slabs: list[DeliverySlab] = []     # optional slab-based pricing (overrides per_km)
 
 
+class CodConfig(BaseModel):
+    enabled: bool = True                 # global master switch for Cash on Delivery
+    # Optional scheduled pause window (COD is off while now is inside it). ISO
+    # datetime strings, e.g. "2026-07-10T09:00". Either bound may be omitted:
+    # only `disabled_until` -> off until then; only `disabled_from` -> off from
+    # then on; both -> off between them; neither -> no scheduled pause.
+    disabled_from: str | None = None
+    disabled_until: str | None = None
+
+
 class ShopConfig(BaseModel):
     name: str = "Clothing Store"
     address: str = ""
@@ -35,6 +45,7 @@ class Settings(BaseModel):
     # How many days after delivery a customer may request a return/exchange.
     # 0 disables returns entirely.
     return_window_days: float = 7
+    cod: CodConfig = CodConfig()
     shop: ShopConfig = ShopConfig()
     delivery: DeliveryConfig = DeliveryConfig()
 
@@ -45,5 +56,6 @@ class SettingsUpdate(BaseModel):
     tax_rate: float | None = None
     cancel_window_hours: float | None = None
     return_window_days: float | None = None
+    cod: CodConfig | None = None
     shop: ShopConfig | None = None
     delivery: DeliveryConfig | None = None
