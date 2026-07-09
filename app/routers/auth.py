@@ -2,6 +2,7 @@ import hashlib
 import secrets
 from datetime import datetime, timedelta, timezone
 
+import requests
 from fastapi import APIRouter, Body, Depends, HTTPException
 
 from app.core.config import settings as app_settings
@@ -213,6 +214,85 @@ async def google_auth(id_token: str = Body(..., embed=True)):
             patch["google_sub"] = info.get("sub")
         if not doc.get("avatar") and info.get("picture"):
             patch["avatar"] = info.get("picture")
+        if patch:
+            await db.users.update_one({"_id": doc["_id"]}, {"$set": patch})
+            doc.update(patch)
+
+    user = serialize(doc)
+    token = create_access_token(user["id"], user.get("role", "user"))
+    return AuthResponse(access_token=token, user=_public(user))
+
+
+@router.post("/facebook", response_model=AuthResponse)
+async def facebook_auth(access_token: str = Body(..., embed=True)):
+    """Sign in with a Facebook access token from the app; upsert the user, issue JWT.
+
+    Mirrors /auth/google. The token is first checked against our own app via
+    debug_token (so a token minted for another app can't be replayed), then the
+    profile is read from the Graph API. Facebook may withhold email — we fall
+    back to a stable Facebook-scoped placeholder so the account still works."""
+    if not (app_settings.FACEBOOK_APP_ID and app_settings.FACEBOOK_APP_SECRET):
+        raise HTTPException(status_code=500, detail="Facebook sign-in is not configured")
+
+    app_token = f"{app_settings.FACEBOOK_APP_ID}|{app_settings.FACEBOOK_APP_SECRET}"
+    try:
+        dbg = requests.get(
+            "https://graph.facebook.com/debug_token",
+            params={"input_token": access_token, "access_token": app_token},
+            timeout=10,
+        ).json()
+    except Exception:
+        raise HTTPException(status_code=401, detail="Could not verify Facebook token")
+    data = dbg.get("data") or {}
+    if not data.get("is_valid") or str(data.get("app_id")) != str(app_settings.FACEBOOK_APP_ID):
+        raise HTTPException(status_code=401, detail="Invalid Facebook token")
+
+    try:
+        me_res = requests.get(
+            "https://graph.facebook.com/me",
+            params={"fields": "id,name,email,picture.width(200)", "access_token": access_token},
+            timeout=10,
+        ).json()
+    except Exception:
+        raise HTTPException(status_code=401, detail="Could not read Facebook profile")
+
+    fb_id = me_res.get("id")
+    if not fb_id:
+        raise HTTPException(status_code=401, detail="Invalid Facebook account")
+    email = (me_res.get("email") or "").lower() or f"{fb_id}@facebook.local"
+    name = me_res.get("name") or "Facebook User"
+    picture = (((me_res.get("picture") or {}).get("data")) or {}).get("url")
+
+    db = get_db()
+    doc = await db.users.find_one({"$or": [{"email": email}, {"facebook_id": fb_id}]})
+    if not doc:
+        doc = {
+            "name": name,
+            "email": email,
+            "phone": None,
+            "password": None,
+            "role": "user",
+            "provider": "facebook",
+            "facebook_id": fb_id,
+            "avatar": picture,
+            "addresses": [],
+            "fcm_tokens": [],
+            "created_at": datetime.now(timezone.utc),
+        }
+        res = await db.users.insert_one(doc)
+        doc["_id"] = res.inserted_id
+        await notifications.schedule(
+            db, str(doc["_id"]), "first_order_welcome", notifications.WELCOME_DELAY_MIN
+        )
+    else:
+        # Link Facebook to an existing account; backfill avatar.
+        patch = {}
+        if not doc.get("provider"):
+            patch["provider"] = "facebook"
+        if not doc.get("facebook_id"):
+            patch["facebook_id"] = fb_id
+        if not doc.get("avatar") and picture:
+            patch["avatar"] = picture
         if patch:
             await db.users.update_one({"_id": doc["_id"]}, {"$set": patch})
             doc.update(patch)

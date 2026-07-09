@@ -29,6 +29,10 @@ class Settings(BaseSettings):
     # against. Same value the app passes as webClientId to Google Sign-In.
     GOOGLE_CLIENT_ID: str = ""
 
+    # Facebook Login: verify the app-scoped access token the mobile SDK returns.
+    FACEBOOK_APP_ID: str = ""
+    FACEBOOK_APP_SECRET: str = ""
+
     # Transactional email (Resend) — used for the signup OTP. Client swaps
     # these later; leaving RESEND_API_KEY empty just logs the code (dev).
     RESEND_API_KEY: str = ""
