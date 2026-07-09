@@ -387,6 +387,45 @@ async def admin_refund(order_id: str):
     return {"refund_status": "initiated", "refund_id": r.get("id")}
 
 
+@router.get("/{order_id}/payment", dependencies=[Depends(require_admin)])
+async def admin_order_payment(order_id: str):
+    """Live payment record from Razorpay for an online order — method, bank,
+    UPI VPA / card, gateway fee, contact. The stored txn/coupon fields already
+    come back with the order; this pulls the rest straight from the gateway."""
+    db = get_db()
+    order = await db.orders.find_one({"_id": to_object_id(order_id)})
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    pid = order.get("razorpay_payment_id")
+    if not pid:
+        raise HTTPException(status_code=400, detail="This order has no online payment")
+    try:
+        p = razorpay_service.fetch_payment(pid)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Could not fetch payment: {e}")
+    card = p.get("card") or {}
+    return {
+        "id": p.get("id"),
+        "status": p.get("status"),
+        "captured": p.get("captured"),
+        "method": p.get("method"),
+        "amount": (p.get("amount") or 0) / 100,
+        "currency": p.get("currency"),
+        "bank": p.get("bank"),
+        "wallet": p.get("wallet"),
+        "vpa": p.get("vpa"),
+        "card_last4": card.get("last4"),
+        "card_network": card.get("network"),
+        "card_type": card.get("type"),
+        "email": p.get("email"),
+        "contact": p.get("contact"),
+        "fee": (p.get("fee") or 0) / 100,
+        "tax": (p.get("tax") or 0) / 100,
+        "created_at": p.get("created_at"),  # unix seconds
+        "acquirer_data": p.get("acquirer_data"),
+    }
+
+
 @router.get("/{order_id}")
 async def get_order(order_id: str, user: dict = Depends(get_current_user)):
     db = get_db()

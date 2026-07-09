@@ -146,7 +146,30 @@ async def all_returns(status: str | None = None):
     db = get_db()
     q = {"status": status} if status else {}
     docs = await db.returns.find(q).sort("created_at", -1).to_list(length=500)
-    return [serialize(d) for d in docs]
+    # Enrich each request with the parent order's payment + coupon details so the
+    # admin sees the full transaction (txn id, razorpay order id, paid at, coupon
+    # + discount, customer) right here — same info as the Orders/Refunds screens.
+    order_cache: dict = {}
+    out = []
+    for d in docs:
+        oid = d.get("order_id")
+        order = order_cache.get(oid) if oid else None
+        if oid and oid not in order_cache:
+            try:
+                order = await db.orders.find_one({"_id": to_object_id(oid)})
+            except Exception:
+                order = None
+            order_cache[oid] = order
+        if order:
+            d["razorpay_order_id"] = order.get("razorpay_order_id")
+            d["paid_at"] = order.get("paid_at")
+            d["coupon_code"] = order.get("coupon_code")
+            d["coupon_discount"] = order.get("discount")
+            d["order_amount"] = order.get("amount")
+            d["order_created_at"] = order.get("created_at")
+            d["address"] = order.get("address")
+        out.append(serialize(d))
+    return out
 
 
 @router.patch("/{return_id}", dependencies=[Depends(require_admin)])

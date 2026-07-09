@@ -23,6 +23,13 @@ def create_order(amount_paise: int, receipt: str, currency: str = "INR") -> dict
     )
 
 
+def fetch_payment(payment_id: str) -> dict:
+    """Fetch the full gateway record for a captured payment (method, bank,
+    UPI VPA / card, fee, contact, etc.)."""
+    client = _get_client()
+    return client.payment.fetch(payment_id)
+
+
 def refund(payment_id: str, amount_paise: int | None = None) -> dict:
     """Refund a captured payment (full by default). Raises on failure."""
     client = _get_client()
