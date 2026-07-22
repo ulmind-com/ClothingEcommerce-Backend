@@ -21,6 +21,7 @@ from app.routers import (
     reviews,
     search,
     settings as settings_router,
+    site_media,
     upload,
     users,
     wishlist,
@@ -76,6 +77,7 @@ app.include_router(home_sections.router)
 app.include_router(notifications_router.router)
 app.include_router(chat.router)
 app.include_router(returns.router)
+app.include_router(site_media.router)
 
 
 import os

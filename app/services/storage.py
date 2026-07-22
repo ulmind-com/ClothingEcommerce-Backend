@@ -31,3 +31,28 @@ def upload_image(file_bytes: bytes, folder: str = "clothing") -> str:
         raise RuntimeError("Cloudinary is not configured")
     result = cloudinary.uploader.upload(file_bytes, folder=folder)
     return result["secure_url"]
+
+
+def upload_video(file_bytes: bytes, folder: str = "clothing/video") -> dict:
+    """Upload a clip and derive a poster frame from it.
+
+    Cloudinary needs resource_type="video" explicitly; the poster is the same
+    asset requested as a .jpg, so the reel can show a still before playback
+    without a second upload.
+    """
+    if not _ensure_config():
+        raise RuntimeError("Cloudinary is not configured")
+    result = cloudinary.uploader.upload_large(
+        file_bytes,
+        folder=folder,
+        resource_type="video",
+        chunk_size=6_000_000,
+    )
+    url = result["secure_url"]
+    poster = url.rsplit(".", 1)[0] + ".jpg" if "." in url else None
+    return {
+        "url": url,
+        "poster": poster,
+        "duration": result.get("duration"),
+        "bytes": result.get("bytes"),
+    }
